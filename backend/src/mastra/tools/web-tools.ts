@@ -3,6 +3,21 @@ import { z } from "zod";
 import { FETCH_TIMEOUT_MS } from "../../fetch-timeout.js";
 import { getTinyFishApiKey, tinyFishHeaders } from "../../local-credentials.js";
 
+function httpUrl(value: string): URL | undefined {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username ||
+    url.password
+  ) return undefined;
+  return url;
+}
+
 const searchResultSchema = z.object({
   title: z.string(),
   snippet: z.string(),
@@ -87,14 +102,15 @@ export const fetchPageTool = createTool({
   execute: async ({ url: targetUrl }) => {
     if (!targetUrl?.trim())
       return { error: "url is required and cannot be empty." };
-    if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://"))
-      return { error: `Invalid URL "${targetUrl}". Must start with http:// or https://.` };
+    const safeUrl = httpUrl(targetUrl);
+    if (!safeUrl)
+      return { error: "URL must be a valid HTTP(S) URL without embedded credentials." };
 
     const apiKey = await getTinyFishApiKey();
     if (!apiKey)
       return { error: "TINYFISH_API_KEY is not configured. Page fetch is unavailable — use data from search snippets instead." };
 
-    console.log(`[fetch_page] Fetching: ${targetUrl}`);
+    console.log(`[fetch_page] Fetching: ${safeUrl.href}`);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -105,7 +121,7 @@ export const fetchPageTool = createTool({
           "Content-Type": "application/json",
           ...tinyFishHeaders(apiKey),
         },
-        body: JSON.stringify({ urls: [targetUrl], format: "markdown" }),
+        body: JSON.stringify({ urls: [safeUrl.href], format: "markdown" }),
         signal: controller.signal,
       });
       clearTimeout(timeout);
