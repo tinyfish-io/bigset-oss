@@ -51,7 +51,7 @@ golden_images:
       runtime_version: "24.14.0"
       base_os: Debian 12 (Bookworm) slim
       digest_updated: "2026-02-27"
-      eol: "2029-04-30"
+      eol: "2028-04-30"
       description: >
         Node.js 24 LTS on Debian 12 Bookworm slim. DevOps-managed. Slim variant reduces attack surface vs the full image
         while retaining native-module compatibility (unlike Alpine/musl). Receives timely Debian security patches for
@@ -73,6 +73,57 @@ golden_images:
       caveats:
         - "Migrate to node-24-lts (recommended) before April 2027 EOL."
         - "Developer team owns OS-level CVE patching and all Vanta SLA obligations."
+
+    - tier: recommended
+      alias: node-24-distroless
+      image: gcr.io/distroless/nodejs24-debian13:nonroot
+      uri: gcr.io/distroless/nodejs24-debian13:nonroot@sha256:af85d11ce7ef10172855a6e3649e3e8125b1b9e3ca41849ec2918036f05cb212
+      runtime_version: "24.18.0"
+      base_os: Debian 13 (Trixie), distroless — no package manager
+      digest_updated: "2026-07-26"
+      eol: "2028-04-30"
+      description: >
+        Node.js 24 LTS on Google's distroless Debian 13 base. DevOps-managed. Ships the Node runtime plus glibc,
+        libstdc++, OpenSSL 3, libgomp, zlib and zstd — 13 OS packages, 31 shared library files — and nothing
+        else: no shell, no package manager, no npm, no coreutils. Runs as UID 65532 (nonroot) enforced in the
+        image config, so a container cannot accidentally run as root. This is a RUNTIME image; it cannot build.
+      selection_rationale: >
+        Shrinks the base-image CVE surface instead of patching it. node:24-bookworm-slim carries 88 Debian
+        packages (measured 2026-07-26); this image carries 13 — an 85% reduction. It also ships no bundled
+        global npm, which removes a second recurring finding source: the internal-tools frontend had to
+        apt-upgrade openssl and then delete /usr/local/lib/node_modules/npm outright to clear CVEs vendored
+        inside npm's own dependency tree (picomatch, and previously minimatch and tar), none of which the
+        application ever executed. Both of those hand-patches become unnecessary here, and base-image
+        remediation collapses to one quarterly digest rotation. Scope note: this covers the base image only.
+        Application dependencies are copied into the final image unchanged, so their CVEs are unaffected and
+        remain the job of Dependabot/OSV-Scanner and the owning team. Distroless also cuts post-exploitation
+        blast radius — with no /bin/sh, no curl and no package manager, an attacker holding code execution has
+        no tooling to pivot. Debian 13 is specified rather than the debian12 variant because debian12 ships
+        Node 24.14.0 while the services migrating to this image already run 24.18.0; pinning debian12 would
+        silently downgrade the runtime by four minor releases. Note that node-24-lts above is still pinned at
+        24.14.0, so a build pairing that builder with this runtime spans two patch levels — harmless for a
+        Next.js standalone bundle, but it is a symptom of the overdue digest review, not an intended pairing.
+      use_case: "Final runtime stage of a multi-stage Node build. Pair with node-24-lts as the builder stage."
+      caveats:
+        - "Runtime only — has no npm and no shell, so it cannot be used as a builder stage."
+        - >-
+          No shell means no interactive debugging: `docker exec` and `aws ecs execute-command` give you
+          nothing. Use the matching :debug-nonroot variant (busybox included) for troubleshooting, never in
+          production. Note :debug is the root-running variant — prefer :debug-nonroot to keep the same UID.
+        - >-
+          Prebuilt native addons may need a system library staged in from the builder. Verified case:
+          node-canvas needs libuuid.so.1, which this image omits — copy it by library NAME, never by a
+          hardcoded multiarch path, and set LD_LIBRARY_PATH so it resolves on both amd64 and arm64.
+        - >-
+          No apt, so OS CVEs cannot be patched in-image. Remediation is a digest rotation through this
+          file — which is why this entry is recommended-tier and DevOps-owned.
+        - >-
+          The image ENTRYPOINT is already /nodejs/bin/node, so CMD takes the script path alone:
+          CMD ["server.js"].
+        - >-
+          fontconfig has no default config file. If the service renders text via node-canvas, ship a
+          minimal fonts.conf and set FONTCONFIG_FILE, otherwise every render logs a benign
+          "Cannot load default config file" error.
 
   # ---------------------------------------------------------------------------
   # Python
