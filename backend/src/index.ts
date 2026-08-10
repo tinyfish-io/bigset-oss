@@ -4,7 +4,7 @@ import type { ClerkClient } from "@clerk/backend";
 import { z } from "zod";
 
 import { env } from "./env.js";
-import clerkAuthPlugin, { requireAuth, getUserEmail } from "./clerk-auth.js";
+import clerkAuthPlugin, { requireAuth, requireClerkAuth, getUserEmail } from "./clerk-auth.js";
 import { inferSchema } from "./pipeline/schema-inference.js";
 import { datasetContextSchema, type DatasetContext } from "./pipeline/populate.js";
 import { populateWorkflow } from "./mastra/workflows/populate.js";
@@ -25,6 +25,7 @@ import {
   verifyOpenRouterApiKey,
   verifyTinyFishApiKey,
 } from "./local-credentials.js";
+import { generateApiKey } from "./api-key.js";
 
 /** Domain part of an email, for analytics (we never log full addresses). */
 function emailDomain(email: string): string {
@@ -355,6 +356,82 @@ async function runUpdateWorkflowInBackground({
       logger.error(
         { err: statusErr, datasetId },
         "Failed to transition dataset status to 'failed' after update",
+      );
+    }
+  } finally {
+    deregisterDataset(datasetId);
+  }
+}
+
+/**
+ * Background runner for the enrichment workflow.
+ * Processes rows concurrently to fill empty columns with AI-researched data.
+ */
+async function runEnrichWorkflowInBackground({
+  input,
+  run,
+  authorizedUserId,
+  logger,
+}: {
+  input: {
+    datasetId: string;
+    sourceColumns: string[];
+    targetColumns: Array<{ name: string; type: "text" | "number" | "boolean" | "url" | "date"; description?: string }>;
+    authContext: {
+      authorizedUserId: string;
+      workflowRunId: string;
+      modelConfig: {
+        schemaInference: string;
+        populateOrchestrator: string;
+        investigateSubagent: string;
+      };
+    };
+    enrichmentRunId: string;
+  };
+  run: EnrichWorkflowRun;
+  authorizedUserId: string;
+  logger: FastifyBaseLogger;
+}): Promise<void> {
+  const datasetId = input.datasetId;
+
+  try {
+    const result = await run.start({
+      inputData: input,
+    });
+
+    logger.info(
+      {
+        workflowStatus: result.status,
+        steps: JSON.stringify(result.steps).slice(0, 2000),
+      },
+      "Enrich workflow completed",
+    );
+
+    if (result.status !== "success") {
+      throw new Error(`Enrich workflow ended with status: ${result.status}`);
+    }
+
+    logger.info(
+      { datasetId, result: JSON.stringify(result) },
+      "Enrich workflow finished",
+    );
+  } catch (err) {
+    const lastStatusError = statusErrorMessage(err);
+    logger.error({ err, datasetId }, "Enrich background workflow failed");
+
+    // Mark the enrichment run as failed
+    try {
+      await convex.mutation(internal.sheetsEnrichmentRuns.complete, {
+        id: input.enrichmentRunId as any,
+        rowsProcessed: 0,
+        rowsUpdated: 0,
+        rowsFound: 0,
+        status: "failed",
+      });
+    } catch (statusErr) {
+      logger.error(
+        { err: statusErr, datasetId },
+        "Failed to mark enrichment run as failed",
       );
     }
   } finally {
@@ -693,7 +770,7 @@ if (env.IS_LOCAL_MODE) {
 await fastify.register(fastifyCors, {
   origin: Array.from(allowedCorsOrigins),
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-API-Key"],
   credentials: true,
   maxAge: 86400,
 });
@@ -1145,6 +1222,7 @@ await fastify.register(async (instance) => {
   instance.post("/populate", async (req, reply) => {
     const parsed = datasetContextSchema.safeParse(req.body);
     if (!parsed.success) {
+      req.log.info({ validationErrors: parsed.error.flatten().fieldErrors }, "populate validation failed");
       return reply.code(400).send({
         error: "Invalid request",
         details: parsed.error.flatten().fieldErrors,
@@ -1366,6 +1444,420 @@ await fastify.register(async (instance) => {
       }
       req.log.error(err, "Stop failed");
       return reply.code(502).send({ error: "Failed to stop dataset run. Please try again." });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  //  API key management — generate / list / revoke. Only accessible with
+  //  a Clerk session (browser/frontend). Non-browser clients use the issued
+  //  key via the X-API-Key header on the other protected routes.
+  // ────────────────────────────────────────────────────────────────────────
+
+  await instance.register(async (apiKeysInstance) => {
+    apiKeysInstance.addHook("preHandler", requireClerkAuth);
+
+    apiKeysInstance.post("/api-keys", async (req, reply) => {
+      const auth = req.auth;
+      if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+      const body = req.body as { name?: string };
+      const name = (body?.name ?? "Default key").toString().slice(0, 60) || "Default key";
+
+      try {
+        const { key, keyHash, keyPrefix } = generateApiKey();
+        const { id } = await convex.mutation(internal.apiKeys.create, {
+          ownerId: auth.userId,
+          name,
+          keyHash,
+          keyPrefix,
+          createdAt: Date.now(),
+        });
+        return reply.code(201).send({ id, key, keyPrefix, name });
+      } catch (err) {
+        req.log.error(err, "Failed to create API key");
+        return reply.code(500).send({ error: "Failed to create API key" });
+      }
+    });
+
+    apiKeysInstance.get("/api-keys", async (req, reply) => {
+      const auth = req.auth;
+      if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+      try {
+        const rows = await convex.query(internal.apiKeys.listByOwner, { ownerId: auth.userId });
+        return {
+          keys: rows
+            .filter((k: { revokedAt?: number }) => !k.revokedAt)
+            .map((k: { _id: unknown; name: string; keyPrefix: string; createdAt: number; lastUsedAt?: number }) => ({
+              id: k._id,
+              name: k.name,
+              keyPrefix: k.keyPrefix,
+              createdAt: k.createdAt,
+              lastUsedAt: k.lastUsedAt ?? null,
+            })),
+        };
+      } catch (err) {
+        req.log.error(err, "Failed to list API keys");
+        return reply.code(500).send({ error: "Failed to list API keys" });
+      }
+    });
+
+    apiKeysInstance.delete<{ Params: { id: string } }>("/api-keys/:id", async (req, reply) => {
+      const auth = req.auth;
+      if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+      const id = req.params?.id;
+      if (!id) return reply.code(400).send({ error: "id is required" });
+
+      try {
+        const result = await convex.mutation(internal.apiKeys.revoke, {
+          id: id as never,
+          ownerId: auth.userId,
+          revokedAt: Date.now(),
+        });
+        if (!result) return reply.code(404).send({ error: "Key not found" });
+        return { success: true };
+      } catch (err) {
+        req.log.error(err, "Failed to revoke API key");
+        return reply.code(500).send({ error: "Failed to revoke API key" });
+      }
+    });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+//  Sheets add-on routes — accept either Clerk JWT OR API key.
+//  These mirror the CLI routes but live in the protected (or local) auth
+//  path so the add-on works for both self-hosted local users and
+//  Clerk-authenticated cloud users.
+// ────────────────────────────────────────────────────────────────────────
+
+const addonCreateDatasetSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1),
+  columns: z.array(
+    z.object({
+      name: z.string().trim().min(1),
+      type: z.enum(["text", "number", "boolean", "url", "date"]),
+      description: z.optional(z.string()),
+      isPrimaryKey: z.optional(z.boolean()),
+    }),
+  ),
+  retrievalStrategy: z.optional(
+    z.enum(["search_fetch", "browser", "hybrid"]),
+  ),
+  sourceHint: z.optional(z.string()),
+  maxRowCount: z.number().int().min(1).max(2500).default(100),
+  refreshCadence: refreshCadenceSchema.default("manual"),
+});
+
+await fastify.register(async (instance) => {
+  instance.addHook("preHandler", requireAuth);
+
+  instance.post("/addon/datasets", async (req, reply) => {
+    const auth = req.auth;
+    if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+    const parsed = addonCreateDatasetSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "Invalid request",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const datasetId = await convex.mutation(
+        internal.datasets.createForOwnerInternal,
+        {
+          ownerId: auth.userId,
+          name: parsed.data.name,
+          description: parsed.data.description,
+          refreshCadence: parsed.data.refreshCadence,
+          maxRowCount: parsed.data.maxRowCount,
+          columns: parsed.data.columns,
+          retrievalStrategy: parsed.data.retrievalStrategy,
+          sourceHint: parsed.data.sourceHint,
+        },
+      );
+
+      const dataset = await convex.query(internal.datasets.getInternal, {
+        id: datasetId,
+      });
+      return reply.code(201).send({ dataset });
+    } catch (err) {
+      req.log.error(err, "Addon dataset create failed");
+      return reply.code(502).send({ error: "Failed to create dataset" });
+    }
+  });
+
+  instance.get("/addon/datasets", async (req, reply) => {
+    const auth = req.auth;
+    if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+    try {
+      const datasets = await convex.query(internal.datasets.listByOwnerInternal, {
+        ownerId: auth.userId,
+      });
+      return { datasets };
+    } catch (err) {
+      req.log.error(err, "Addon dataset list failed");
+      return reply.code(502).send({ error: "Failed to list datasets" });
+    }
+  });
+
+  instance.get("/addon/datasets/public", async (req, reply) => {
+    try {
+      const datasets = await convex.query(internal.datasets.listPublicInternal, {});
+      return { datasets };
+    } catch (err) {
+      req.log.error(err, "Addon public dataset list failed");
+      return reply.code(502).send({ error: "Failed to list public datasets" });
+    }
+  });
+
+  instance.get<{ Params: { datasetId: string } }>(
+    "/addon/datasets/public/:datasetId/rows",
+    async (req, reply) => {
+      const params = cliDatasetIdParamsSchema.safeParse(req.params);
+      if (!params.success) {
+        return reply.code(400).send({ error: "datasetId is required" });
+      }
+
+      try {
+        const dataset = await convex.query(internal.datasets.getInternal, {
+          id: params.data.datasetId,
+        });
+        if (!dataset || dataset.visibility !== "public") {
+          return reply.code(404).send({ error: "Dataset not found" });
+        }
+        const rows = await convex.query(internal.datasetRows.listInternal, {
+          datasetId: params.data.datasetId,
+        });
+        return { rows, dataset };
+      } catch (err) {
+        req.log.error(err, "Addon public rows get failed");
+        return reply.code(400).send({ error: "Invalid datasetId" });
+      }
+    },
+  );
+
+  instance.get<{ Params: { datasetId: string } }>(
+    "/addon/datasets/:datasetId",
+    async (req, reply) => {
+      const auth = req.auth;
+      if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+      const params = cliDatasetIdParamsSchema.safeParse(req.params);
+      if (!params.success) {
+        return reply.code(400).send({ error: "datasetId is required" });
+      }
+
+      try {
+        const dataset = await convex.query(internal.datasets.getInternal, {
+          id: params.data.datasetId,
+        });
+        if (!dataset || dataset.ownerId !== auth.userId) {
+          return reply.code(404).send({ error: "Dataset not found" });
+        }
+        return { dataset };
+      } catch (err) {
+        req.log.error(err, "Addon dataset get failed");
+        return reply.code(400).send({ error: "Invalid datasetId" });
+      }
+    },
+  );
+
+  instance.get<{ Params: { datasetId: string } }>(
+    "/addon/datasets/:datasetId/rows",
+    async (req, reply) => {
+      const auth = req.auth;
+      if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+      const params = cliDatasetIdParamsSchema.safeParse(req.params);
+      if (!params.success) {
+        return reply.code(400).send({ error: "datasetId is required" });
+      }
+
+      try {
+        const dataset = await convex.query(internal.datasets.getInternal, {
+          id: params.data.datasetId,
+        });
+        const isPublic = (dataset as Record<string, unknown> | null)?.visibility === "public";
+        if (!dataset || (dataset.ownerId !== auth.userId && !isPublic)) {
+          return reply.code(404).send({ error: "Dataset not found" });
+        }
+        const rows = await convex.query(internal.datasetRows.listInternal, {
+          datasetId: params.data.datasetId,
+        });
+        if (!rows) return reply.code(404).send({ error: "Dataset not found" });
+        return { rows, dataset };
+      } catch (err) {
+        req.log.error(err, "Addon rows get failed");
+        return reply.code(400).send({ error: "Invalid datasetId" });
+      }
+    },
+  );
+
+  // ────────────────────────────────────────────────────────────────────────
+  //  Data Enrichment — fill empty columns directly from sheet data
+  //  Independent of BigSet datasets
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Enrich rows directly from sheet data.
+   * POST /sheets/enrich
+   *
+   * Request body:
+   * {
+   *   sourceColumns: string[],                    // Columns with identifying data
+   *   targetColumns: string[],                   // Columns to fill
+   *   rows: Array<{                              // Rows to enrich
+   *     rowIndex: number,                        // Row number in the sheet
+   *     sourceData: Record<string, unknown>      // Current values in source columns
+   *   }>
+   * }
+   *
+   * Response:
+   * {
+   *   results: Array<{
+   *     rowIndex: number,
+   *     values: Record<string, unknown>,         // Enriched values to write
+   *     error?: string
+   *   }>,
+   *   stats: {
+   *     rowsProcessed: number,
+   *     rowsEnriched: number,
+   *     rowsWithErrors: number
+   *   }
+   * }
+   */
+  instance.post<{
+    Body: {
+      sourceColumns: string[];
+      targetColumns: string[];
+      rows: Array<{
+        rowIndex: number;
+        sourceData: Record<string, unknown>;
+        targetColumns?: string[];
+      }>;
+    };
+  }>("/sheets/enrich", async (req, reply) => {
+    const auth = req.auth;
+    if (!auth) return reply.code(401).send({ error: "Authentication required" });
+
+    const body = req.body;
+    if (!Array.isArray(body.sourceColumns) || body.sourceColumns.length === 0) {
+      return reply.code(400).send({ error: "At least one source column is required" });
+    }
+    if (!Array.isArray(body.targetColumns) || body.targetColumns.length === 0) {
+      return reply.code(400).send({ error: "At least one target column is required" });
+    }
+    if (!Array.isArray(body.rows) || body.rows.length === 0) {
+      return reply.code(400).send({ error: "At least one row is required" });
+    }
+
+    if (!(await ensureLocalSetupReady(reply))) return;
+
+    try {
+      const { getModelConfig } = await import("./config/models.js");
+      const modelConfig = await getModelConfig(auth.userId);
+      const { requireOpenRouterApiKey } = await import("./local-credentials.js");
+      const openRouterApiKey = await requireOpenRouterApiKey();
+
+      const { buildEnrichAgent, parseEnrichResponse } = await import("./mastra/agents/enrich-agent.js");
+
+      const results: Array<{
+        rowIndex: number;
+        values: Record<string, unknown>;
+        error?: string;
+      }> = new Array(body.rows.length);
+      let rowsEnriched = 0;
+      let rowsWithErrors = 0;
+
+      const mockAuthContext = {
+        authorizedUserId: auth.userId,
+        workflowRunId: `enrich-${Date.now()}`,
+        modelConfig,
+      };
+
+      const MAX_CONCURRENT = 5;
+      let idx = 0;
+
+      const workers = Array.from(
+        { length: Math.min(MAX_CONCURRENT, body.rows.length) },
+        async () => {
+          while (idx < body.rows.length) {
+            const i = idx++;
+            const row = body.rows[i];
+            try {
+              const sourceData: Record<string, unknown> = {};
+              for (const col of body.sourceColumns) {
+                if (row.sourceData[col] !== undefined && row.sourceData[col] !== null && row.sourceData[col] !== "") {
+                  sourceData[col] = row.sourceData[col];
+                }
+              }
+
+              if (Object.keys(sourceData).length === 0) {
+                results[i] = { rowIndex: row.rowIndex, values: {}, error: "No source data" };
+                continue;
+              }
+
+              const rowTargetCols = row.targetColumns ?? body.targetColumns;
+              const columnsToFill = rowTargetCols.map((name: string) => ({
+                name,
+                type: "text" as const,
+              }));
+
+              const agent = buildEnrichAgent(
+                "sheet-enrichment",
+                mockAuthContext as any,
+                sourceData,
+                columnsToFill,
+                openRouterApiKey,
+              );
+
+              const result = await agent.generate(
+                `Research and find values for these columns based on the entity information provided. Return ONLY a JSON object with the found values.`,
+                { maxSteps: 10 }
+              );
+
+              const foundValues = parseEnrichResponse(result.text, rowTargetCols);
+
+              if (foundValues && Object.keys(foundValues).length > 0) {
+                const cleanValues: Record<string, unknown> = {};
+                for (const [col, val] of Object.entries(foundValues)) {
+                  if (val !== null && val !== undefined && val !== "") {
+                    cleanValues[col] = val;
+                  }
+                }
+                results[i] = { rowIndex: row.rowIndex, values: cleanValues };
+                if (Object.keys(cleanValues).length > 0) rowsEnriched++;
+              } else {
+                results[i] = { rowIndex: row.rowIndex, values: {}, error: "No values found" };
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              results[i] = { rowIndex: row.rowIndex, values: {}, error: msg };
+              rowsWithErrors++;
+            }
+          }
+        }
+      );
+
+      await Promise.allSettled(workers);
+
+      return {
+        results,
+        stats: {
+          rowsProcessed: body.rows.length,
+          rowsEnriched,
+          rowsWithErrors,
+        },
+      };
+    } catch (err) {
+      req.log.error(err, "Enrich processing failed");
+      return reply.code(502).send({ error: "Failed to process enrichment. Please try again." });
     }
   });
 });

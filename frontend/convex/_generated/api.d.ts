@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as apiKeys from "../apiKeys.js";
 import type * as datasetRows from "../datasetRows.js";
 import type * as datasets from "../datasets.js";
 import type * as lib_authz from "../lib/authz.js";
@@ -19,6 +20,7 @@ import type * as openRouterModels from "../openRouterModels.js";
 import type * as publicSeed from "../publicSeed.js";
 import type * as quota from "../quota.js";
 import type * as runStats from "../runStats.js";
+import type * as sheetsEnrichmentRuns from "../sheetsEnrichmentRuns.js";
 
 import type {
   ApiFromModules,
@@ -27,6 +29,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  apiKeys: typeof apiKeys;
   datasetRows: typeof datasetRows;
   datasets: typeof datasets;
   "lib/authz": typeof lib_authz;
@@ -38,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   publicSeed: typeof publicSeed;
   quota: typeof quota;
   runStats: typeof runStats;
+  sheetsEnrichmentRuns: typeof sheetsEnrichmentRuns;
 }>;
 
 /**
