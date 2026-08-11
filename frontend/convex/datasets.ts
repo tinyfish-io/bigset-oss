@@ -480,6 +480,27 @@ export const updateRefreshSettings = mutation({
   },
 });
 
+export const updateDetails = mutation({
+  args: {
+    id: v.id("datasets"),
+    name: v.string(),
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const trimmedName = args.name.trim();
+    if (!trimmedName) throw new Error("Dataset name cannot be empty");
+    const dataset = await loadOwnedDataset(ctx, args.id);
+
+    const nameChanged = trimmedName !== dataset.name;
+    const descChanged = args.description !== undefined && args.description !== dataset.description;
+    if (!nameChanged && !descChanged) return;
+
+    const patch: Partial<Doc<"datasets">> = { name: trimmedName };
+    if (descChanged) patch.description = args.description;
+    await ctx.db.patch(dataset._id, patch);
+  },
+});
+
 export const updateMaxRowCount = mutation({
   args: {
     id: v.id("datasets"),
