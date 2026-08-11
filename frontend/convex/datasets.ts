@@ -545,6 +545,73 @@ export const updateStatus = mutation({
   },
 });
 
+export const updateVisibility = mutation({
+  args: {
+    id: v.id("datasets"),
+    visibility: v.union(v.literal("public"), v.literal("private")),
+  },
+  handler: async (ctx, args) => {
+    const dataset = await loadOwnedDataset(ctx, args.id);
+    await ctx.db.patch(dataset._id, { visibility: args.visibility });
+  },
+});
+
+export const importDataset = mutation({
+  args: { sourceId: v.id("datasets") },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx);
+    assertNotReservedOwner(identity.subject);
+    const source = await loadReadableDataset(ctx, args.sourceId);
+    if (source.visibility !== "public") {
+      throw new Error("Dataset is not public.");
+    }
+    if (source.ownerId === identity.subject) {
+      throw new Error("You already own this dataset.");
+    }
+    const maxRowCount = source.maxRowCount ?? DEFAULT_MAX_ROW_COUNT;
+    await requireQuotaRemaining(ctx, identity.subject, maxRowCount);
+    return await ctx.db.insert("datasets", {
+      name: source.name,
+      description: source.description,
+      columns: source.columns,
+      ownerId: identity.subject,
+      status: "paused",
+      visibility: "private",
+      rowCount: 0,
+      refreshCadence: "manual",
+      refreshEnabled: false,
+      maxRowCount,
+      nextRefreshAt: nextRefreshAtFor("manual", Date.now()),
+    });
+  },
+});
+
+export const importDatasetFromSchema = mutation({
+  args: {
+    name: v.string(),
+    description: v.string(),
+    columns: v.array(columnValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx);
+    assertNotReservedOwner(identity.subject);
+    await requireQuotaRemaining(ctx, identity.subject, DEFAULT_MAX_ROW_COUNT);
+    return await ctx.db.insert("datasets", {
+      name: args.name,
+      description: args.description,
+      columns: args.columns,
+      ownerId: identity.subject,
+      status: "paused",
+      visibility: "private",
+      rowCount: 0,
+      refreshCadence: "manual",
+      refreshEnabled: false,
+      maxRowCount: DEFAULT_MAX_ROW_COUNT,
+      nextRefreshAt: nextRefreshAtFor("manual", Date.now()),
+    });
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("datasets") },
   handler: async (ctx, args) => {

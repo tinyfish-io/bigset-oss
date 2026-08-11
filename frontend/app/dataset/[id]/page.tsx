@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -36,6 +36,9 @@ export default function DatasetPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmPopulate, setConfirmPopulate] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [addingToMyBigSet, setAddingToMyBigSet] = useState(false);
+  const [addToMyBigSetError, setAddToMyBigSetError] = useState<string | null>(null);
   const [savingRefreshCadence, setSavingRefreshCadence] = useState(false);
   const [savingMaxRowCount, setSavingMaxRowCount] = useState(false);
   const [maxRowCountSaveError, setMaxRowCountSaveError] = useState<string | null>(null);
@@ -54,8 +57,11 @@ export default function DatasetPage() {
     api.datasetRows.listByDataset,
     authLoading ? "skip" : { datasetId },
   );
+  const router = useRouter();
   const updateRefreshSettings = useMutation(api.datasets.updateRefreshSettings);
   const updateMaxRowCount = useMutation(api.datasets.updateMaxRowCount);
+  const updateVisibility = useMutation(api.datasets.updateVisibility);
+  const importDataset = useMutation(api.datasets.importDataset);
   const usage = useQuery(
     api.quota.getMy,
     isAuthenticated ? {} : "skip",
@@ -303,6 +309,22 @@ export default function DatasetPage() {
     }
   }, [isDatasetBusy]);
 
+  async function handleAddToMyBigSet() {
+    if (!dataset || addingToMyBigSet) return;
+    setAddingToMyBigSet(true);
+    setAddToMyBigSetError(null);
+    try {
+      const newId = await importDataset({ sourceId: dataset._id });
+      router.push(`/dataset/${newId}`);
+    } catch (err) {
+      captureException(err, { operation: "dataset_import", sourceId: dataset._id });
+      const msg = err instanceof Error ? err.message : "Import failed.";
+      setAddToMyBigSetError(msg);
+    } finally {
+      setAddingToMyBigSet(false);
+    }
+  }
+
   if (authLoading || dataset === undefined || rows === undefined) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -386,6 +408,37 @@ export default function DatasetPage() {
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
               {stopLabel}
+            </button>
+          )}
+
+          {isOwner && (
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground/[0.05]"
+              aria-label="Share dataset"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+              </svg>
+              Share
+            </button>
+          )}
+
+          {!isOwner && dataset.visibility === "public" && (
+            <button
+              type="button"
+              onClick={handleAddToMyBigSet}
+              disabled={addingToMyBigSet}
+              title={addToMyBigSetError ?? undefined}
+              className="flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-2.5 py-1.5 text-xs font-semibold text-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {addToMyBigSetError
+                ? "Failed — try again"
+                : addingToMyBigSet
+                  ? "Adding..."
+                  : "Add to my BigSet"}
             </button>
           )}
 
@@ -474,6 +527,18 @@ export default function DatasetPage() {
             handlePopulate();
           }}
           onCancel={() => setConfirmPopulate(false)}
+        />
+      )}
+
+      {shareOpen && (
+        <ShareModal
+          datasetId={dataset._id}
+          datasetName={dataset.name}
+          description={dataset.description}
+          columns={dataset.columns}
+          visibility={dataset.visibility ?? "private"}
+          onVisibilityChange={(v) => updateVisibility({ id: dataset._id, visibility: v })}
+          onClose={() => setShareOpen(false)}
         />
       )}
     </div>
@@ -855,6 +920,153 @@ function ConfirmPopulateModal({
             Delete &amp; populate
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Share modal                                                         */
+/* ------------------------------------------------------------------ */
+
+function ShareModal({
+  datasetId,
+  datasetName,
+  description,
+  columns,
+  visibility,
+  onVisibilityChange,
+  onClose,
+}: {
+  datasetId: string;
+  datasetName: string;
+  description: string;
+  columns: Array<{ name: string; type: string; description?: string; isPrimaryKey?: boolean }>;
+  visibility: "public" | "private";
+  onVisibilityChange: (v: "public" | "private") => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const shareUrl = typeof window !== "undefined"
+    ? (() => {
+        const minimal = {
+          name: datasetName,
+          description,
+          columns: columns.map(({ name, type, isPrimaryKey }) => ({ name, type, ...(isPrimaryKey ? { isPrimaryKey } : {}) })),
+        };
+        const json = JSON.stringify(minimal);
+        const schema = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
+        return `${window.location.origin}/share/${datasetId}?schema=${schema}`;
+      })()
+    : "";
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  async function handleToggle(next: "public" | "private") {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onVisibilityChange(next);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to update. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setSaveError("Copy failed. Select and copy the link manually.");
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      role="presentation"
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="share-modal-title" className="w-full max-w-sm rounded-xl border border-border bg-surface shadow-2xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p id="share-modal-title" className="text-sm font-semibold text-foreground">
+            Share &ldquo;{datasetName}&rdquo;
+          </p>
+          <button
+            onClick={onClose}
+            className="text-muted hover:text-foreground transition-colors"
+            aria-label="Close"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border border-border bg-foreground/[0.03] px-3 py-2.5">
+          <div>
+            <p className="text-xs font-medium text-foreground">
+              {visibility === "public" ? "Public" : "Private"}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted">
+              {visibility === "public"
+                ? "Anyone with the link can view and add this dataset."
+                : "Only you can see this dataset."}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={visibility === "public"}
+            disabled={saving}
+            onClick={() => handleToggle(visibility === "public" ? "private" : "public")}
+            onKeyDown={(e) => {
+              if ((e.key === " " || e.key === "Enter") && !saving) {
+                e.preventDefault();
+                handleToggle(visibility === "public" ? "private" : "public");
+              }
+            }}
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-40 ${visibility === "public" ? "bg-accent" : "bg-foreground/20"}`}
+          >
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${visibility === "public" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          </button>
+        </div>
+
+        {saveError && (
+          <p className="mt-2 text-[11px] text-red-500">{saveError}</p>
+        )}
+
+        {visibility === "public" && (
+          <div className="mt-3">
+            <p className="text-[11px] text-muted mb-1.5">Share link</p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={shareUrl}
+                className="flex-1 min-w-0 rounded-lg border border-border bg-foreground/[0.03] px-3 py-1.5 text-xs text-foreground font-mono outline-none"
+                onFocus={(e) => e.target.select()}
+              />
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground hover:bg-foreground/[0.05] transition-colors"
+              >
+                {copied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

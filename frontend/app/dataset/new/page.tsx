@@ -143,6 +143,9 @@ export default function NewDatasetPage() {
       );
       setRetrievalStrategy(schema.retrieval_strategy);
       setSourceHint(schema.source_hint);
+      if (schema.suggested_row_count) {
+        setMaxRowCountInput(String(schema.suggested_row_count));
+      }
       track(EVENTS.DATASET_SCHEMA_GENERATED, {
         column_count: schema.columns.length,
       });

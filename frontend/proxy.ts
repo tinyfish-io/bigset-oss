@@ -32,6 +32,7 @@ function isPublicPath(req: NextRequest): boolean {
     path !== "/dataset/new" &&
     !path.startsWith("/dataset/new/")
   ) return true;
+  if (path.startsWith("/share/")) return true;
   return false;
 }
 

@@ -18,11 +18,21 @@ function numberFromEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function stringListFromEnv(name: string, fallback: string[]): string[] {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export const env = {
   PROD: process.env.PROD,
   IS_PROD: process.env.PROD === "1",
   IS_LOCAL_MODE: process.env.PROD !== "1",
   CLIENT_ORIGIN: process.env.CLIENT_ORIGIN || "http://localhost:3500",
+  CLIENT_ORIGINS: stringListFromEnv("CLIENT_ORIGIN", ["http://localhost:3500"]),
   CONVEX_URL: required("CONVEX_URL"),
   PORT: numberFromEnv("PORT", 3501),
 
