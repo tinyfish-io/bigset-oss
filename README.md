@@ -93,7 +93,7 @@ On first launch, BigSet sends you to setup. You'll connect two services:
 | Service | What it's for | Get your key |
 |---------|--------------|-------------|
 | **TinyFish** | Web search + page fetching | [tinyfish.ai/api-keys](https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2) |
-| **OpenRouter** | LLM calls (schema inference + agents) | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
+| **LLM provider** | Schema inference + agents | OpenRouter, direct providers, Ollama, LM Studio, or another OpenAI-compatible endpoint |
 
 Local API keys are stored in your OS keychain.
 
@@ -214,23 +214,24 @@ Once everything is ready, you'll see:
 | **Mastra Studio** (workflow inspector) | [localhost:4111](http://localhost:4111) |
 
 Open [localhost:3500](http://localhost:3500). The setup screen will ask for
-TinyFish and OpenRouter credentials and save them to your OS keychain for this
-workspace.
+TinyFish credentials plus an LLM provider. Choose OpenRouter, a direct hosted
+provider, Ollama, LM Studio, or another OpenAI-compatible endpoint. BigSet saves
+local keys to your OS keychain for this workspace.
 
-### Step 3: Connect TinyFish and OpenRouter
+### Step 3: Connect TinyFish and an LLM provider
 
-TinyFish powers web search and page fetching. OpenRouter routes LLM calls to
-the models BigSet uses for schema inference and agents.
+TinyFish powers web search and page fetching. Your LLM provider powers schema
+inference and dataset-building agents.
 
 1. Create a TinyFish key at [agent.tinyfish.ai/api-keys](https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2)
-2. Create an OpenRouter key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)
-3. Paste both into BigSet's setup screen
-
-OpenRouter is pay-as-you-go; $5-10 is plenty to start.
+2. Choose an LLM provider. Hosted providers use an API key; Ollama and LM Studio
+   need no key by default.
+3. Save the provider, then choose models for each role in the model picker when
+   the provider does not supply defaults.
 
 > **Note:** root `.env` is the only local env file. If you edit Convex functions in `frontend/convex/`, run `make convex-push` to deploy the changes.
-
-> **Free tier:** cloud signed-in accounts get **2,500 row operations per calendar month** (resets on the 1st, UTC). Local mode bypasses the cloud quota and uses your TinyFish/OpenRouter accounts directly.
+>
+> **Free tier:** cloud signed-in accounts get **2,500 row operations per calendar month** (resets on the 1st, UTC). Local mode bypasses the cloud quota and uses your TinyFish + LLM provider accounts directly.
 
 ### Step 4 (optional): Load curated datasets
 
@@ -311,7 +312,7 @@ If you want a completely fresh start: `make clean` then `make dev`.
 | Auth | Local auth (dev); [Clerk](https://clerk.com) (cloud) |
 | Database | [Convex](https://convex.dev) (self-hosted) |
 | Data Collection | [TinyFish](https://www.tinyfish.ai?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2) APIs (Search, Fetch, Browser) |
-| AI orchestration | [Mastra](https://mastra.ai) workflows + [Vercel AI SDK](https://sdk.vercel.ai) + [OpenRouter](https://openrouter.ai) → Claude Sonnet (schema inference + populate agent) |
+| AI orchestration | [Mastra](https://mastra.ai) workflows + [Vercel AI SDK](https://sdk.vercel.ai) + a configured hosted, local, or OpenAI-compatible LLM provider |
 | Table view | [TanStack Table](https://tanstack.com/table) + [react-window](https://github.com/bvaughn/react-window) virtualization |
 | Exports | CSV (built-in) + XLSX ([SheetJS](https://sheetjs.com), dynamic-imported) |
 | Analytics | [PostHog](https://posthog.com) — events, session replay, error tracking (optional) |

@@ -15,7 +15,7 @@ To add a new protected route, register it inside the scoped plugin in `src/index
 
 ## Schema Inference Pipeline
 
-`src/pipeline/schema-inference.ts` — takes a natural language prompt and returns a structured `DatasetSchema` (Zod-validated, defined in `src/pipeline/types.ts`). Uses Claude Sonnet 4.6 via OpenRouter (`@openrouter/ai-sdk-provider` + Vercel AI SDK). Auto-retries once on validation failure by feeding the error back to the model.
+`src/pipeline/schema-inference.ts` — takes a natural language prompt and returns a structured `DatasetSchema` (Zod-validated, defined in `src/pipeline/types.ts`). Uses the configured LLM provider/model via `src/config/llm.ts` + Vercel AI SDK. Auto-retries once on validation failure by feeding the error back to the model.
 
 The pipeline is a pure function (`inferSchema(prompt) → DatasetSchema`). It is called by both Fastify (for the HTTP API) and Mastra (for workflow orchestration).
 
@@ -26,7 +26,7 @@ The pipeline is a pure function (`inferSchema(prompt) → DatasetSchema`). It is
 - `src/mastra/index.ts` — registers workflows with the `Mastra` instance (the populate agent is built per-run, not registered as a singleton)
 - `src/mastra/workflows/infer-schema.ts` — `inferSchemaWorkflow`, a single-step workflow wrapping `inferSchema()`
 - `src/mastra/workflows/populate.ts` — `populateWorkflow`, 3-step workflow: clear rows → build prompt → run populate agent
-- `src/mastra/agents/populate.ts` — `buildPopulateAgent(authorizedDatasetId, authContext, columns)`, builds the orchestrator agent (Claude Sonnet 4.6) with 3 tools: `search_web`, `fetch_page`, `investigate_row`. No write access — all inserts go through investigate subagents.
+- `src/mastra/agents/populate.ts` — `buildPopulateAgent(authorizedDatasetId, authContext, columns)`, builds the orchestrator agent with the configured LLM provider/model and 3 tools: `search_web`, `fetch_page`, `investigate_row`. No write access — all inserts go through investigate subagents.
 - `src/mastra/agents/investigate.ts` — `buildInvestigateAgent(authorizedDatasetId, authContext, columns)`, builds a per-entity subagent with `insert_row`, `list_rows`, `search_web`, `fetch_page`. Researches one entity, inserts at most one row, returns structured feedback (`INSERTED/SUMMARY/CLUES/REASON`).
 - `src/mastra/tools/investigate-tool.ts` — `buildInvestigateTool(authorizedDatasetId, authContext, columns)` creates the `investigate_row` tool. The orchestrator calls it to hand off a lead; it spawns a fresh investigate agent, runs it (maxSteps: 25), parses the structured output, and returns it to the orchestrator. Errors are caught and returned as structured failures so the orchestrator can self-correct.
 - `src/mastra/tools/dataset-tools.ts` — `buildPopulateTools(authorizedDatasetId, authContext)` factory returning 5 Convex-backed tools: `insert_row`, `list_rows`, `get_row`, `update_row`, `delete_row`. The dataset id is captured by closure so the LLM cannot redirect writes to other datasets; `authContext` (Clerk userId + workflow run id) is captured for caller-attribution in security logs and the `CAPABILITY_VIOLATION` PostHog event. See the security note at the top of the file.
@@ -48,7 +48,7 @@ Required env vars (see `.env.example`):
 - `CONVEX_URL` — Convex instance URL
 - `CONVEX_SELF_HOSTED_ADMIN_KEY` — for system-level Convex writes (internal mutations)
 - `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` — for JWT verification
-- `OPENROUTER_API_KEY` — for AI model calls
+- `OPENROUTER_API_KEY` — production default LLM provider key; local mode can use providers including OpenRouter, direct hosted APIs, Ollama, LM Studio, and custom OpenAI-compatible endpoints via the setup UI
 - `TINYFISH_API_KEY` — for web search and fetch (populate agent). Get one at https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2
 
 In Docker, these are interpolated from the root `.env` file via `docker-compose.dev.yml`.

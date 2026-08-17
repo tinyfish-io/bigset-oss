@@ -23,42 +23,32 @@ export function SettingsTile({
     <button
       type="button"
       onClick={onClick}
-      style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", padding: "16px 16px 16px 0" }}
+      className="group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg p-4 text-left transition-colors hover:bg-foreground/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-link"
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--foreground)", textAlign: "left" }}>{label}</p>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-foreground">{label}</p>
         {description && (
-          <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "2px", textAlign: "left" }}>{description}</p>
+          <p className="mt-0.5 text-xs leading-5 text-muted">{description}</p>
         )}
       </div>
 
       {showTrailingButton && (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+        <div className="flex shrink-0 items-center gap-2">
           {value && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                height: "32px",
-                paddingLeft: "12px",
-                paddingRight: "12px",
-                borderRadius: "8px",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <span style={{ fontSize: "12px", color: "var(--foreground)", fontWeight: 500, maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div className="flex h-8 items-center rounded-lg border border-border bg-background pl-3 pr-2 transition-colors group-hover:border-foreground/30">
+              <span className="max-w-[140px] truncate text-xs font-medium text-foreground">
                 {value}
               </span>
-              <ChevronRight size={16} style={{ color: "var(--muted)", marginLeft: "4px", flexShrink: 0 }} />
+              <ChevronRight className="ml-1 size-4 shrink-0 text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
             </div>
           )}
           {trailingIcon && !value && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "32px", width: "32px", borderRadius: "8px", border: "1px solid var(--border)", color: "var(--muted)" }}>
+            <div className="flex size-8 items-center justify-center rounded-lg border border-border text-muted transition-colors group-hover:border-foreground/30 group-hover:text-foreground">
               {trailingIcon}
             </div>
           )}
           {!value && !trailingIcon && (
-            <ChevronRight size={16} style={{ color: "var(--muted)" }} />
+            <ChevronRight className="size-4 text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
           )}
         </div>
       )}

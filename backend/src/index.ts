@@ -7,6 +7,8 @@ import { env } from "./env.js";
 import clerkAuthPlugin, { requireAuth, getUserEmail } from "./clerk-auth.js";
 import { inferSchema } from "./pipeline/schema-inference.js";
 import { datasetContextSchema, type DatasetContext } from "./pipeline/populate.js";
+import type { ResolvedModelConfig } from "./config/models.js";
+import type { ReasoningLevel } from "./config/llm.js";
 import { populateWorkflow } from "./mastra/workflows/populate.js";
 import { updateWorkflow } from "./mastra/workflows/update.js";
 import { convex, internal } from "./convex.js";
@@ -22,9 +24,17 @@ import {
   getLocalSetupStatus,
   requireLocalSetupComplete,
   saveLocalCredential,
+  saveLocalLlmProviderConfig,
+  setActiveLocalLlmProvider,
   verifyOpenRouterApiKey,
   verifyTinyFishApiKey,
 } from "./local-credentials.js";
+import {
+  isLlmProviderType,
+  normalizeLlmProviderInput,
+  verifyLlmProviderConfig,
+  type LlmProviderInput,
+} from "./config/llm.js";
 
 /** Domain part of an email, for analytics (we never log full addresses). */
 function emailDomain(email: string): string {
@@ -200,7 +210,7 @@ async function ensureLocalSetupReady(reply: FastifyReply): Promise<boolean> {
     return true;
   } catch {
     await reply.code(428).send({
-      error: "Local setup is incomplete. Connect TinyFish and OpenRouter first.",
+      error: "Local setup is incomplete. Connect TinyFish and an LLM provider first.",
     });
     return false;
   }
@@ -269,11 +279,7 @@ async function runUpdateWorkflowInBackground({
   authorizedUserId: string;
   logger: FastifyBaseLogger;
   clerk: ClerkClient;
-  modelConfig: {
-    schemaInference: string;
-    populateOrchestrator: string;
-    investigateSubagent: string;
-  };
+  modelConfig: ResolvedModelConfig;
 }): Promise<void> {
   const datasetId = input.datasetId;
   // registerDataset is called by the route handler before void-ing this
@@ -373,11 +379,7 @@ async function runScheduledUpdateWorkflowInBackground({
   run: UpdateWorkflowRun;
   authorizedUserId: string;
   logger: FastifyBaseLogger;
-  modelConfig: {
-    schemaInference: string;
-    populateOrchestrator: string;
-    investigateSubagent: string;
-  };
+  modelConfig: ResolvedModelConfig;
 }): Promise<void> {
   const datasetId = input.datasetId;
   registerDataset(datasetId);
@@ -447,11 +449,7 @@ async function runPopulateWorkflowInBackground({
   authorizedUserId: string;
   logger: FastifyBaseLogger;
   clerk: ClerkClient;
-  modelConfig: {
-    schemaInference: string;
-    populateOrchestrator: string;
-    investigateSubagent: string;
-  };
+  modelConfig: ResolvedModelConfig;
 }): Promise<void> {
   const datasetId = input.datasetId;
 
@@ -752,6 +750,63 @@ fastify.post("/local-setup/tinyfish", async (req, reply) => {
   }
 });
 
+fastify.post(
+  "/local-setup/llm-provider",
+  { preHandler: requireAuth },
+  async (req, reply) => {
+    if (!env.IS_LOCAL_MODE) {
+      return reply.code(404).send({ error: "Not found" });
+    }
+
+    const body = (req.body ?? {}) as Partial<LlmProviderInput>;
+    const provider = body.provider;
+    if (!isLlmProviderType(provider)) {
+      return reply.code(400).send({ error: "Choose a supported LLM provider" });
+    }
+
+    try {
+      const apiKey = body.apiKey?.trim() ?? "";
+      const isKeylessProvider =
+        provider === "custom" ||
+        provider === "ollama" ||
+        provider === "lmstudio";
+      const isNewKeylessProvider =
+        isKeylessProvider && (provider !== "custom" || !!body.baseUrl?.trim());
+
+      if (!apiKey && !isNewKeylessProvider) {
+        const status = await getLocalSetupStatus();
+        const savedProvider = status.services.llmProviders?.[provider];
+        if (!savedProvider?.configured) {
+          return reply.code(400).send({
+            error: `${savedProvider?.providerLabel ?? provider} API key is required`,
+          });
+        }
+        await setActiveLocalLlmProvider(provider);
+        return await getLocalSetupStatus();
+      }
+
+      const config = normalizeLlmProviderInput(
+        {
+          provider,
+          apiKey,
+          baseUrl: body.baseUrl,
+          defaultModel: body.defaultModel,
+        },
+        "local",
+      );
+      await verifyLlmProviderConfig(config);
+      await saveLocalLlmProviderConfig(config, "api_key");
+      return await getLocalSetupStatus();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "LLM provider verification failed";
+      req.log.warn({ err }, "LLM provider local setup verification failed");
+      return reply.code(400).send({ error: message });
+    }
+  },
+);
+
+// Backward-compatible endpoint for older setup UI builds.
 fastify.post("/local-setup/openrouter-key", async (req, reply) => {
   if (!env.IS_LOCAL_MODE) {
     return reply.code(404).send({ error: "Not found" });
@@ -822,6 +877,25 @@ fastify.get("/openrouter/models", async (req, reply) => {
     return reply.code(500).send({ error: "Failed to load models" });
   }
 });
+
+fastify.get(
+  "/llm-provider/models",
+  { preHandler: requireAuth },
+  async (req, reply) => {
+    const { fetchModelsForCurrentLlmProvider } = await import(
+      "./config/models.js"
+    );
+    try {
+      const models = await fetchModelsForCurrentLlmProvider();
+      return { models };
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to load models";
+      req.log.error(err, "Failed to load current LLM provider models");
+      return reply.code(500).send({ error: message });
+    }
+  },
+);
 
 // ────────────────────────────────────────────────────────────────────────
 //  Local trusted CLI routes
@@ -1069,45 +1143,87 @@ await fastify.register(async (instance) => {
 
   instance.get("/settings/models", async (req) => {
     const { getModelConfig } = await import("./config/models.js");
+    const { reasoningSupported } = await import("./config/llm.js");
+    const { getLlmProviderConfig } = await import("./local-credentials.js");
     const config = await getModelConfig(req.auth!.userId);
-    return { config };
+    const llmConfig = await getLlmProviderConfig();
+    return {
+      config,
+      // The reasoning control is inert on providers whose SDK exposes no knob,
+      // so the UI disables it rather than pretending the setting applies.
+      reasoningSupported: reasoningSupported(llmConfig?.provider ?? "openrouter"),
+    };
   });
 
   instance.post("/settings/models", async (req, reply) => {
-    const { upsertModelConfig, validateModelSlug, getCachedModels } = await import("./config/models.js");
+    const { upsertModelConfig, findUnsupportedModelSlugs } = await import("./config/models.js");
+    const { isReasoningLevel } = await import("./config/llm.js");
     const body = req.body as {
       schemaInference?: string | null;
       populateOrchestrator?: string | null;
       investigateSubagent?: string | null;
+      schemaInferenceReasoning?: string | null;
+      populateOrchestratorReasoning?: string | null;
+      investigateSubagentReasoning?: string | null;
+    };
+    // An explicit level is stored as an override; "auto" (or anything off the
+    // scale) clears it so the provider/role default applies again.
+    const reasoningOrAuto = (value: unknown) =>
+      isReasoningLevel(value) ? value : undefined;
+    const config = {
+      schemaInference: typeof body.schemaInference === "string" ? body.schemaInference.trim() || undefined : undefined,
+      populateOrchestrator: typeof body.populateOrchestrator === "string" ? body.populateOrchestrator.trim() || undefined : undefined,
+      investigateSubagent: typeof body.investigateSubagent === "string" ? body.investigateSubagent.trim() || undefined : undefined,
+      schemaInferenceReasoning: reasoningOrAuto(body.schemaInferenceReasoning),
+      populateOrchestratorReasoning: reasoningOrAuto(body.populateOrchestratorReasoning),
+      investigateSubagentReasoning: reasoningOrAuto(body.investigateSubagentReasoning),
+    };
+    // Sending an explicit null for a reasoning field means "back to auto".
+    const clearReasoning = {
+      schemaInference: body.schemaInferenceReasoning === null,
+      populateOrchestrator: body.populateOrchestratorReasoning === null,
+      investigateSubagent: body.investigateSubagentReasoning === null,
     };
 
     const toValidate: Array<{ role: "schemaInference" | "populateOrchestrator" | "investigateSubagent"; slug: string }> = [];
-    if (body.schemaInference) toValidate.push({ role: "schemaInference", slug: body.schemaInference });
-    if (body.populateOrchestrator) toValidate.push({ role: "populateOrchestrator", slug: body.populateOrchestrator });
-    if (body.investigateSubagent) toValidate.push({ role: "investigateSubagent", slug: body.investigateSubagent });
+    if (config.schemaInference) toValidate.push({ role: "schemaInference", slug: config.schemaInference });
+    if (config.populateOrchestrator) toValidate.push({ role: "populateOrchestrator", slug: config.populateOrchestrator });
+    if (config.investigateSubagent) toValidate.push({ role: "investigateSubagent", slug: config.investigateSubagent });
 
     if (toValidate.length > 0) {
+      let unsupported: string[];
       try {
-        const models = await getCachedModels();
-        for (const { role, slug } of toValidate) {
-          const found = models.some((m) => m.canonicalSlug === slug);
-          if (!found) {
-            return reply.code(400).send({
-              error: `Invalid model slug "${slug}" for ${role}. Refresh the model list first or choose a different model.`,
-            });
-          }
-        }
+        unsupported = await findUnsupportedModelSlugs(toValidate.map((v) => v.slug));
       } catch (err) {
-        req.log.error(err, "Failed to validate model slugs — allowing save");
+        // Fail closed: if we can't confirm the slug against the provider, don't
+        // persist a selection that would only break at inference/populate time.
+        req.log.error(err, "Failed to verify model slugs against the current LLM provider");
+        return reply.code(502).send({
+          error:
+            "Couldn't verify the selected model against the provider. Please try again.",
+        });
+      }
+      const uniqueUnsupported = [...new Set(unsupported)];
+      if (uniqueUnsupported.length > 0) {
+        return reply.code(400).send({
+          error: `Unsupported model${uniqueUnsupported.length > 1 ? "s" : ""}: ${uniqueUnsupported.join(", ")}. Choose a model offered by the current provider.`,
+        });
       }
     }
 
     try {
-      await upsertModelConfig(req.auth!.userId, {
-        schemaInference: body.schemaInference ?? undefined,
-        populateOrchestrator: body.populateOrchestrator ?? undefined,
-        investigateSubagent: body.investigateSubagent ?? undefined,
-      });
+      await upsertModelConfig(
+        req.auth!.userId,
+        {
+          schemaInference: config.schemaInference,
+          populateOrchestrator: config.populateOrchestrator,
+          investigateSubagent: config.investigateSubagent,
+          schemaInferenceReasoning: config.schemaInferenceReasoning,
+          populateOrchestratorReasoning: config.populateOrchestratorReasoning,
+          investigateSubagentReasoning: config.investigateSubagentReasoning,
+        },
+        clearReasoning,
+      );
       return { success: true };
     } catch (err) {
       req.log.error(err, "Failed to save model config");
@@ -1125,16 +1241,18 @@ await fastify.register(async (instance) => {
     try {
       const auth = req.auth;
       let modelSlug = body.modelSlug;
+      let reasoning: ReasoningLevel | undefined;
 
       if (!modelSlug && auth) {
         const { getModelConfig } = await import("./config/models.js");
         const config = await getModelConfig(auth.userId);
-        if (config?.schemaInference) {
-          modelSlug = config.schemaInference;
+        if (config?.schemaInference.model) {
+          modelSlug = config.schemaInference.model;
+          reasoning = config.schemaInference.reasoning;
         }
       }
 
-      const schema = await inferSchema(body.prompt.trim(), modelSlug);
+      const schema = await inferSchema(body.prompt.trim(), modelSlug, reasoning);
       return schema;
     } catch (err) {
       req.log.error(err, "Schema inference failed");

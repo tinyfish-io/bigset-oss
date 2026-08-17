@@ -1,8 +1,13 @@
+import {
+  OPENROUTER_DEFAULT_MODEL,
+  type LlmProviderType,
+} from "@/lib/llm-provider-types";
+
 export interface InferredSchema {
   dataset_name: string;
   description: string;
   columns: InferredColumn[];
-  primary_key: string;
+  primary_key: string[];
   retrieval_strategy: "search_fetch" | "browser" | "hybrid";
   source_hint: string;
 }
@@ -35,24 +40,52 @@ export interface WorkflowResult {
 }
 
 /**
- * The effective model config — always complete, never null.
- * schemaInference / populateOrchestrator / investigateSubagent are always strings
- * (user preference or system default from env).
+ * Canonical reasoning scale, mirroring the backend. Each provider's own ladder
+ * differs (xAI has two rungs, Anthropic five, Qwen a token budget), so the UI
+ * and stored config speak this scale and the backend projects it per provider.
+ * Ordered weakest to strongest — the settings slider relies on that order.
  */
-export interface EffectiveModelConfig {
-  schemaInference: string;
-  populateOrchestrator: string;
-  investigateSubagent: string;
+export const REASONING_LEVELS = ["none", "low", "medium", "high", "max"] as const;
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+
+export const REASONING_LEVEL_LABELS: Record<ReasoningLevel, string> = {
+  none: "None",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  max: "Max",
+};
+
+/** One role's resolved model and the reasoning level it will run at. */
+export interface EffectiveModelRole {
+  model: string;
+  reasoning: ReasoningLevel;
+  /** False means the level came from the provider/role default, not the user. */
+  reasoningOverridden: boolean;
 }
 
 /**
- * User's saved model preferences — stores the canonical slug (e.g. "anthropic/claude-sonnet-4.6")
+ * The effective model config — always complete, never null. Every role resolves
+ * to a concrete model and reasoning level (user preference, or system default).
+ */
+export interface EffectiveModelConfig {
+  schemaInference: EffectiveModelRole;
+  populateOrchestrator: EffectiveModelRole;
+  investigateSubagent: EffectiveModelRole;
+}
+
+/**
+ * User's saved model preferences — stores the provider model id (e.g. "openai/gpt-oss-120b" or "gpt-5.6-luna")
  * for each agent role. Null means no preference saved — backend will use the env default.
  */
 export interface SavedModelConfig {
   schemaInference: string | null;
   populateOrchestrator: string | null;
   investigateSubagent: string | null;
+  /** An explicit level pins it; `null` returns the role to auto. */
+  schemaInferenceReasoning: ReasoningLevel | null;
+  populateOrchestratorReasoning: ReasoningLevel | null;
+  investigateSubagentReasoning: ReasoningLevel | null;
 }
 
 export interface OpenRouterModel {
@@ -63,11 +96,17 @@ export interface OpenRouterModel {
   promptCost: number;
 }
 
+export type { LlmProviderType } from "@/lib/llm-provider-types";
+
 export interface ServiceSetupStatus {
   configured: boolean;
   source: "local" | "env" | null;
   connectionMethod: "api_key" | "oauth" | null;
   verifiedAt: number | null;
+  provider?: LlmProviderType;
+  providerLabel?: string;
+  baseUrl?: string;
+  defaultModel?: string;
 }
 
 export interface LocalSetupStatus {
@@ -76,7 +115,9 @@ export interface LocalSetupStatus {
   complete: boolean;
   services: {
     tinyfish: ServiceSetupStatus;
-    openrouter: ServiceSetupStatus;
+    llm: ServiceSetupStatus;
+    llmProviders?: Record<LlmProviderType, ServiceSetupStatus>;
+    openrouter?: ServiceSetupStatus;
   };
 }
 
@@ -116,13 +157,16 @@ export async function saveTinyFishApiKey(
   return res.json();
 }
 
-export async function saveOpenRouterApiKey(
-  apiKey: string,
-): Promise<LocalSetupStatus> {
-  const res = await fetch(`${BACKEND_URL}/local-setup/openrouter-key`, {
+export async function saveLlmProviderConfig(config: {
+  provider: LlmProviderType;
+  apiKey?: string;
+  defaultModel: string;
+  baseUrl?: string;
+}): Promise<LocalSetupStatus> {
+  const res = await fetch(`${BACKEND_URL}/local-setup/llm-provider`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey }),
+    body: JSON.stringify(config),
   });
 
   if (!res.ok) {
@@ -130,6 +174,16 @@ export async function saveOpenRouterApiKey(
   }
 
   return res.json();
+}
+
+export async function saveOpenRouterApiKey(
+  apiKey: string,
+): Promise<LocalSetupStatus> {
+  return saveLlmProviderConfig({
+    provider: "openrouter",
+    apiKey,
+    defaultModel: OPENROUTER_DEFAULT_MODEL,
+  });
 }
 
 export async function exchangeOpenRouterOAuth(
@@ -161,7 +215,13 @@ export async function exchangeOpenRouterOAuth(
  * @param token - Clerk JWT obtained via getToken()
  * Throws if the request fails (network error, 401, 500).
  */
-export async function getModelConfig(token: string): Promise<EffectiveModelConfig> {
+export interface ModelSettings {
+  config: EffectiveModelConfig;
+  /** False when the active provider exposes no reasoning control. */
+  reasoningSupported: boolean;
+}
+
+export async function getModelConfig(token: string): Promise<ModelSettings> {
   const res = await fetch(`${BACKEND_URL}/settings/models`, {
     method: "GET",
     headers: {
@@ -177,7 +237,10 @@ export async function getModelConfig(token: string): Promise<EffectiveModelConfi
   }
 
   const data = await res.json();
-  return data.config;
+  return {
+    config: data.config,
+    reasoningSupported: data.reasoningSupported !== false,
+  };
 }
 
 /**
@@ -187,7 +250,7 @@ export async function getModelConfig(token: string): Promise<EffectiveModelConfi
  * and does a partial upsert — only the fields provided in the body are updated.
  * Unset fields retain their existing values.
  *
- * @param config - A partial model config. e.g. { schemaInference: "google/gemini-2.0-flash-001" }
+ * @param config - A partial model config. e.g. { schemaInference: "gemini-3.6-flash" }
  *                Only the roles the user wants to change need to be included.
  * @param token - Clerk JWT obtained via getToken()
  *
@@ -226,6 +289,29 @@ export async function saveModelConfig(
 export async function getOpenRouterModels(): Promise<OpenRouterModel[]> {
   const res = await fetch(`${BACKEND_URL}/openrouter/models`, {
     method: "GET",
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const message = body?.error || `Backend error (${res.status})`;
+    throw new Error(message);
+  }
+
+  const data = await res.json();
+  return data.models ?? [];
+}
+
+/**
+ * Fetch the current LLM provider's selectable model list.
+ *
+ * Requires auth outside local mode (the route exercises provider credentials
+ * and rate limits). Pass a Clerk JWT from the authenticated settings UI; the
+ * local-mode setup flow may call it without a token.
+ */
+export async function getLlmProviderModels(token?: string): Promise<OpenRouterModel[]> {
+  const res = await fetch(`${BACKEND_URL}/llm-provider/models`, {
+    method: "GET",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
   if (!res.ok) {

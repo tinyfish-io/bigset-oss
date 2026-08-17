@@ -35,7 +35,7 @@ export const datasetSchemaSchema = z
     dataset_name: z.string().regex(snakeCase, "must be snake_case"),
     description: z.string().min(1),
     columns: z.array(columnDefinitionSchema).min(1),
-    primary_key: z.union([z.string(), z.array(z.string())]),
+    primary_key: z.array(z.string()).min(1),
     retrieval_strategy: retrievalStrategySchema,
     source_hint: z.string().min(1),
   })
@@ -61,9 +61,7 @@ export const datasetSchemaSchema = z
     }
 
     const pkNames = pkCols.map((c) => c.name);
-    const declaredPkRaw = Array.isArray(data.primary_key)
-      ? data.primary_key
-      : [data.primary_key];
+    const declaredPkRaw = data.primary_key;
     const declaredPk = [...new Set(declaredPkRaw)];
     if (
       declaredPk.length !== declaredPkRaw.length ||
