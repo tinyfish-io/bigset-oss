@@ -254,10 +254,20 @@ export async function verifyOpenRouterApiKey(apiKey: string): Promise<void> {
 
   await withFetchTimeout(
     async (signal) => {
-      const response = await fetch(`${baseUrl}/key`, {
+      let response = await fetch(`${baseUrl}/key`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal,
       });
+
+      // OpenAI-compatible gateways that don't implement OpenRouter's `/key`
+      // endpoint (e.g. OrcaRouter) can still be verified with a lightweight
+      // authenticated request — `/models` returns 401 for invalid keys.
+      if (response.status === 404) {
+        response = await fetch(`${baseUrl}/models`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal,
+        });
+      }
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
