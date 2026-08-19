@@ -1,7 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { buildPopulateTools } from "../tools/dataset-tools.js";
-import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
+import { buildWebTools } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
 import type { PopulateColumn } from "../../pipeline/populate.js";
 
@@ -62,6 +62,7 @@ export function buildRefreshAgent(
     authorizedDatasetId,
     authContext,
   );
+  const { searchWebTool, fetchPageTool } = buildWebTools(authorizedDatasetId);
   return new Agent({
     id: "refresh-agent",
     name: "Dataset Refresh Agent",

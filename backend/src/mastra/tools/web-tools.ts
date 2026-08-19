@@ -1,7 +1,28 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import { getSignal } from "../../abort-registry.js";
 import { FETCH_TIMEOUT_MS } from "../../fetch-timeout.js";
 import { getTinyFishApiKey, tinyFishHeaders } from "../../local-credentials.js";
+
+function requestSignal(datasetId: string) {
+  const workflowSignal = getSignal(datasetId);
+  rethrowIfStopped(workflowSignal);
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  return {
+    workflowSignal,
+    timeoutSignal,
+    signal: workflowSignal
+      ? AbortSignal.any([workflowSignal, timeoutSignal])
+      : timeoutSignal,
+  };
+}
+
+function rethrowIfStopped(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException("Dataset run stopped.", "AbortError");
+}
 
 const searchResultSchema = z.object({
   title: z.string(),
@@ -9,7 +30,7 @@ const searchResultSchema = z.object({
   url: z.string(),
 });
 
-export const searchWebTool = createTool({
+const buildSearchWebTool = (datasetId: string) => createTool({
   id: "search_web",
   description:
     'Search the web for information. Returns a list of results with titles, snippets, and URLs. Call with: {"query": "your search terms"}',
@@ -31,14 +52,12 @@ export const searchWebTool = createTool({
     const url = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`;
     console.log(`[search_web] Searching: "${query}"`);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const signals = requestSignal(datasetId);
     try {
       const res = await fetch(url, {
         headers: tinyFishHeaders(apiKey),
-        signal: controller.signal,
+        signal: signals.signal,
       });
-      clearTimeout(timeout);
 
       if (!res.ok) {
         const body = await res.text();
@@ -62,8 +81,8 @@ export const searchWebTool = createTool({
         return { results: [], error: "No results found for this query. Try a broader search or use synthetic data." };
       return { results };
     } catch (err) {
-      clearTimeout(timeout);
-      if (err instanceof Error && err.name === "AbortError")
+      rethrowIfStopped(signals.workflowSignal);
+      if (signals.timeoutSignal.aborted)
         return { error: "Search timed out. Skip web search and use synthetic data." };
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[search_web] Failed:`, msg);
@@ -72,7 +91,7 @@ export const searchWebTool = createTool({
   },
 });
 
-export const fetchPageTool = createTool({
+const buildFetchPageTool = (datasetId: string) => createTool({
   id: "fetch_page",
   description:
     'Fetch a web page and extract its content as clean markdown text. Call with: {"url": "https://example.com/page"}',
@@ -96,8 +115,7 @@ export const fetchPageTool = createTool({
 
     console.log(`[fetch_page] Fetching: ${targetUrl}`);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const signals = requestSignal(datasetId);
     try {
       const res = await fetch("https://api.fetch.tinyfish.ai", {
         method: "POST",
@@ -106,9 +124,8 @@ export const fetchPageTool = createTool({
           ...tinyFishHeaders(apiKey),
         },
         body: JSON.stringify({ urls: [targetUrl], format: "markdown" }),
-        signal: controller.signal,
+        signal: signals.signal,
       });
-      clearTimeout(timeout);
 
       if (!res.ok) {
         const body = await res.text();
@@ -151,8 +168,8 @@ export const fetchPageTool = createTool({
         text,
       };
     } catch (err) {
-      clearTimeout(timeout);
-      if (err instanceof Error && err.name === "AbortError")
+      rethrowIfStopped(signals.workflowSignal);
+      if (signals.timeoutSignal.aborted)
         return { error: "Page fetch timed out. Try a different URL or use search snippet data." };
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[fetch_page] Failed:`, msg);
@@ -160,3 +177,10 @@ export const fetchPageTool = createTool({
     }
   },
 });
+
+export function buildWebTools(datasetId: string) {
+  return {
+    searchWebTool: buildSearchWebTool(datasetId),
+    fetchPageTool: buildFetchPageTool(datasetId),
+  };
+}
