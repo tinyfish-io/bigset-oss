@@ -5,9 +5,8 @@ Fastify server that handles auth, database, and talks to TinyFish APIs.
 ## Running
 
 ```bash
-# From the repo root:
-cp .env.example .env
-# Fill in the root .env file.
+# From the repo root: `make dev` auto-creates a local .env on first run.
+# Fill in the root .env file (no template to copy).
 cd backend
 npm install
 npm run dev
