@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Search, RefreshCw } from "lucide-react";
+import { Check, X, Search, RefreshCw } from "lucide-react";
 import type { OpenRouterModel } from "./types";
 
 interface ModelSideSheetProps {
@@ -14,6 +14,7 @@ interface ModelSideSheetProps {
   onRefresh?: () => Promise<void>;
   isRefreshing?: boolean;
   isSaving?: boolean;
+  error?: string | null;
 }
 
 function groupModelsByProvider(models: OpenRouterModel[]): Record<string, OpenRouterModel[]> {
@@ -68,10 +69,13 @@ export function ModelSideSheet({
   onRefresh,
   isRefreshing,
   isSaving,
+  error,
 }: ModelSideSheetProps) {
   const [search, setSearch] = useState("");
+  const [customSlug, setCustomSlug] = useState(selectedModel);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const customInputRef = useRef<HTMLInputElement>(null);
 
   const filteredModels = search.trim()
     ? models.filter(
@@ -83,10 +87,17 @@ export function ModelSideSheet({
 
   const groupedModels = groupModelsByProvider(filteredModels);
   const providers = Object.keys(groupedModels).sort();
+  const customSlugValue = customSlug.trim();
 
   useEffect(() => {
     if (open) {
-      setTimeout(() => inputRef.current?.focus(), 100);
+      const focusTimer = setTimeout(() => {
+        inputRef.current?.focus();
+        if (!inputRef.current) {
+          customInputRef.current?.focus();
+        }
+      }, 100);
+      return () => clearTimeout(focusTimer);
     }
   }, [open]);
 
@@ -103,6 +114,12 @@ export function ModelSideSheet({
   }, [open, onClose]);
 
   if (!open) return null;
+
+  function handleCustomSlugSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!customSlugValue || isSaving) return;
+    onSelect(customSlugValue);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={title}>
@@ -138,18 +155,45 @@ export function ModelSideSheet({
           </div>
         </div>
 
-        <div className="px-4 py-3 border-b border-border shrink-0">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted pointer-events-none" />
+        <div className="px-4 py-3 border-b border-border shrink-0 space-y-2">
+          {models.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted pointer-events-none" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search models..."
+                className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted outline-none focus:border-foreground/30 transition-colors"
+              />
+            </div>
+          )}
+          <form onSubmit={handleCustomSlugSubmit} className="flex items-center gap-2">
             <input
-              ref={inputRef}
+              ref={customInputRef}
               type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search models..."
-              className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted outline-none focus:border-foreground/30 transition-colors"
+              value={customSlug}
+              onChange={(e) => setCustomSlug(e.target.value)}
+              placeholder="Custom model slug"
+              aria-label="Custom model slug"
+              disabled={isSaving}
+              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:font-sans placeholder:text-muted outline-none focus:border-foreground/30 transition-colors disabled:opacity-50"
             />
-          </div>
+            <button
+              type="submit"
+              disabled={!customSlugValue || isSaving}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50 disabled:hover:bg-transparent"
+            >
+              <Check className="size-4" />
+              Use
+            </button>
+          </form>
+          {error && (
+            <p role="alert" className="text-xs text-red-500">
+              {error}
+            </p>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -158,7 +202,6 @@ export function ModelSideSheet({
           ) : providers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <p className="text-sm text-muted">No models found</p>
-              <p className="text-xs text-muted mt-1">Try a different search term</p>
             </div>
           ) : (
             <div className="py-2">
@@ -218,19 +261,21 @@ export function ModelSideSheet({
                           </div>
                           <div className="text-right shrink-0 w-16">
                             <p className="text-[11px] text-muted">
-                              {model.contextLength >= 1000
-                                ? `${(model.contextLength / 1000).toLocaleString()}K`
-                                : model.contextLength.toLocaleString()}
+                              {model.contextLength > 0
+                                ? model.contextLength >= 1000
+                                  ? `${(model.contextLength / 1000).toLocaleString()}K`
+                                  : model.contextLength.toLocaleString()
+                                : "—"}
                             </p>
                           </div>
                           <div className="text-right shrink-0 w-14">
                             <p className="text-[11px] text-muted">
-                              ${model.promptCost.toFixed(2)}/1M
+                              {model.promptCost > 0 ? `$${model.promptCost.toFixed(2)}/1M` : "—"}
                             </p>
                           </div>
                           <div className="text-right shrink-0 w-14">
                             <p className="text-[11px] text-muted">
-                              ${model.completionCost.toFixed(2)}/1M
+                              {model.completionCost > 0 ? `$${model.completionCost.toFixed(2)}/1M` : "—"}
                             </p>
                           </div>
                         </button>

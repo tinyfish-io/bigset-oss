@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { createLanguageModel, type LlmProviderConfig } from "../../config/llm.js";
 import { buildSubagentTool } from "../tools/investigate-tool.js";
 import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
@@ -40,21 +40,17 @@ export function buildPopulateAgent(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
-  openRouterApiKey: string,
+  llmConfig: LlmProviderConfig,
   maxRowCount: number,
   metrics?: RunMetrics,
 ): Agent {
-  const modelSlug = authContext.modelConfig!.populateOrchestrator;
-  const openrouter = createOpenRouter({
-    apiKey: openRouterApiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL,
-  });
+  const { model: modelSlug, reasoning } = authContext.modelConfig!.populateOrchestrator;
 
   return new Agent({
     id: "populate-agent",
     name: "Dataset Populate Orchestrator",
     instructions: buildInstructions(maxRowCount),
-    model: openrouter(modelSlug),
+    model: createLanguageModel(llmConfig, modelSlug, reasoning),
     tools: {
       search_web: searchWebTool,
       fetch_page: fetchPageTool,
@@ -62,7 +58,7 @@ export function buildPopulateAgent(
         authorizedDatasetId,
         authContext,
         columns,
-        openRouterApiKey,
+        llmConfig,
         maxRowCount,
         metrics,
       ),

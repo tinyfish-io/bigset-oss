@@ -1,5 +1,17 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import {
+  LLM_PROVIDER_TYPES,
+  LOCAL_CREDENTIAL_SERVICES,
+} from "../lib/llm-provider-types.js";
+
+const llmProviderValidator = v.union(
+  ...LLM_PROVIDER_TYPES.map((provider) => v.literal(provider)),
+);
+
+const localCredentialServiceValidator = v.union(
+  ...LOCAL_CREDENTIAL_SERVICES.map((service) => v.literal(service)),
+);
 
 export default defineSchema({
   datasets: defineTable({
@@ -135,17 +147,34 @@ export default defineSchema({
 
   modelConfig: defineTable({
     userId: v.string(),
+    provider: v.optional(llmProviderValidator),
     schemaInference: v.optional(v.string()),
     populateOrchestrator: v.optional(v.string()),
     investigateSubagent: v.optional(v.string()),
-  }).index("by_user", ["userId"]),
+    // Reasoning-effort override per role, on the canonical scale defined in
+    // the backend (none | low | medium | high | max). Absent means "auto":
+    // the provider/role default is resolved at request time, so switching a
+    // role to a weaker model raises its reasoning without user action.
+    schemaInferenceReasoning: v.optional(v.string()),
+    populateOrchestratorReasoning: v.optional(v.string()),
+    investigateSubagentReasoning: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_provider", ["userId", "provider"]),
 
   localCredentials: defineTable({
-    service: v.union(v.literal("tinyfish"), v.literal("openrouter")),
+    service: localCredentialServiceValidator,
     keychainAccount: v.optional(v.string()),
     connectionMethod: v.union(v.literal("api_key"), v.literal("oauth")),
     verifiedAt: v.number(),
     updatedAt: v.number(),
+    // For service:"llm" this stores the active local LLM provider.
+    // Provider-specific rows store each provider's keychain account and
+    // optional custom base URL so users can switch providers without
+    // re-entering keys.
+    llmProvider: v.optional(llmProviderValidator),
+    llmBaseUrl: v.optional(v.string()),
+    llmDefaultModel: v.optional(v.string()),
     // Legacy only: accepted so the migration can deploy, then cleared by the
     // backend startup purge. New code never writes this field.
     apiKey: v.optional(v.string()),

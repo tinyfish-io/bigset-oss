@@ -39,19 +39,33 @@ export const env = {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+  OPENROUTER_BASE_URL: process.env.OPENROUTER_BASE_URL,
+  GOOGLE_GENERATIVE_AI_BASE_URL: process.env.GOOGLE_GENERATIVE_AI_BASE_URL,
+  XAI_BASE_URL: process.env.XAI_BASE_URL,
+  DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL,
+  QWEN_BASE_URL: process.env.QWEN_BASE_URL,
+  MISTRAL_BASE_URL: process.env.MISTRAL_BASE_URL,
+  GROQ_BASE_URL: process.env.GROQ_BASE_URL,
+  TOGETHER_BASE_URL: process.env.TOGETHER_BASE_URL,
+  DEEPINFRA_BASE_URL: process.env.DEEPINFRA_BASE_URL,
+  FIREWORKS_BASE_URL: process.env.FIREWORKS_BASE_URL,
+  HUGGINGFACE_BASE_URL: process.env.HUGGINGFACE_BASE_URL,
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
+  LM_STUDIO_BASE_URL: process.env.LM_STUDIO_BASE_URL,
   BIGSET_LOCAL_WORKSPACE_ID: required("BIGSET_LOCAL_WORKSPACE_ID"),
   LOCAL_KEYCHAIN_URL: process.env.LOCAL_KEYCHAIN_URL,
   LOCAL_KEYCHAIN_TOKEN: process.env.LOCAL_KEYCHAIN_TOKEN,
   LOCAL_KEYCHAIN_TIMEOUT_MS: numberFromEnv("LOCAL_KEYCHAIN_TIMEOUT_MS", 5_000),
 
   // Default models — used when a user has not saved a preference.
-  // Each must be a valid OpenRouter model slug.
+  // In production these are still interpreted as OpenRouter model slugs; in
+  // local mode the selected LLM provider's default model is used first.
   SCHEMA_INFERENCE_MODEL:
-    process.env.SCHEMA_INFERENCE_MODEL ?? "anthropic/claude-sonnet-4.6",
+    process.env.SCHEMA_INFERENCE_MODEL ?? "anthropic/claude-opus-5",
   POPULATE_ORCHESTRATOR_MODEL:
-    process.env.POPULATE_ORCHESTRATOR_MODEL ?? "qwen/qwen3.7-max",
+    process.env.POPULATE_ORCHESTRATOR_MODEL ?? "anthropic/claude-sonnet-5",
   INVESTIGATE_SUBAGENT_MODEL:
-    process.env.INVESTIGATE_SUBAGENT_MODEL ?? "qwen/qwen3.7-max",
+    process.env.INVESTIGATE_SUBAGENT_MODEL ?? "openai/gpt-5.6-luna",
 
   // Resend (transactional email). Optional — when RESEND_API_KEY is unset
   // the email module no-ops with a log line, so local dev works without

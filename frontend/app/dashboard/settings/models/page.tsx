@@ -1,17 +1,29 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { getModelConfig, saveModelConfig, getOpenRouterModels, refreshOpenRouterModels, type EffectiveModelConfig, type OpenRouterModel } from "@/lib/backend";
+import { getLocalSetupStatus, getLlmProviderModels, getModelConfig, saveModelConfig, refreshOpenRouterModels, type EffectiveModelConfig, type LlmProviderType, type LocalSetupStatus, type OpenRouterModel, type ReasoningLevel } from "@/lib/backend";
 import { SettingsPageLayout } from "@/components/settings/SettingsPageLayout";
 import { SettingsHeader } from "@/components/settings/SettingsHeader";
 import { SettingsTile } from "@/components/settings/SettingsTile";
 import { LocalCredentialsPanel } from "@/components/settings/LocalCredentialsPanel";
 import { ModelSideSheet } from "@/components/settings/ModelSideSheet";
 import { MODEL_ROLES, type ModelRole } from "@/components/settings/types";
+import { ReasoningControl } from "@/components/settings/ReasoningControl";
 import { SkeletonList } from "@/components/settings/Skeleton";
 import { useAppAuth } from "@/lib/app-auth";
+import { isLocalMode } from "@/lib/app-mode";
+
+function modelListCacheKey(status: LocalSetupStatus): string {
+  const llm = status.services.llm;
+  return [
+    llm.provider ?? "openrouter",
+    llm.baseUrl ?? "",
+    llm.defaultModel ?? "",
+    llm.verifiedAt ?? "",
+  ].join("|");
+}
 
 export default function ModelSettingsPage() {
   const { getToken } = useAppAuth();
@@ -21,21 +33,75 @@ export default function ModelSettingsPage() {
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sheetModels, setSheetModels] = useState<OpenRouterModel[]>([]);
+  const [sheetModelsCacheKey, setSheetModelsCacheKey] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState<{ role: ModelRole } | null>(null);
+  const [llmProvider, setLlmProvider] = useState<LlmProviderType | null>(
+    isLocalMode ? null : "openrouter",
+  );
+  const [activeModelListCacheKey, setActiveModelListCacheKey] = useState(
+    isLocalMode ? "" : "openrouter|||",
+  );
+  const activeModelListCacheKeyRef = useRef(activeModelListCacheKey);
   const [isSavingModel, setIsSavingModel] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [modelConfigReloadKey, setModelConfigReloadKey] = useState(0);
+  const [reasoningSupported, setReasoningSupported] = useState(true);
+  const [savingReasoningRole, setSavingReasoningRole] = useState<string | null>(null);
 
-  const isLoading = convexModels === undefined || isLoadingConfig;
+  const needsOpenRouterCache = !isLocalMode || llmProvider === "openrouter";
+  const isLoading =
+    (needsOpenRouterCache && convexModels === undefined) ||
+    isLoadingConfig ||
+    (isLocalMode && llmProvider === null);
+
+  const syncLlmProvider = useCallback((status: LocalSetupStatus) => {
+    const nextCacheKey = modelListCacheKey(status);
+    activeModelListCacheKeyRef.current = nextCacheKey;
+    setLlmProvider(status.services.llm.provider ?? "openrouter");
+    setActiveModelListCacheKey(nextCacheKey);
+  }, []);
+
+  const handleLocalCredentialsStatus = useCallback(
+    (status: LocalSetupStatus) => {
+      syncLlmProvider(status);
+      setSheetModels([]);
+      setSheetModelsCacheKey(null);
+      setModelConfigReloadKey((key) => key + 1);
+    },
+    [syncLlmProvider],
+  );
 
   useEffect(() => {
+    let active = true;
+
     getToken()
       .then((token) => {
         if (!token) throw new Error("Not authenticated");
         return getModelConfig(token);
       })
-      .then((config) => setEffectiveConfig(config))
-      .catch(() => setEffectiveConfig(null))
-      .finally(() => setIsLoadingConfig(false));
-  }, [getToken]);
+      .then((settings) => {
+        if (!active) return;
+        setEffectiveConfig(settings.config);
+        setReasoningSupported(settings.reasoningSupported);
+      })
+      .catch(() => {
+        if (active) setEffectiveConfig(null);
+      })
+      .finally(() => {
+        if (active) setIsLoadingConfig(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [getToken, modelConfigReloadKey]);
+
+  useEffect(() => {
+    if (!isLocalMode) return;
+    getLocalSetupStatus()
+      .then(syncLlmProvider)
+      .catch(() => setLlmProvider("openrouter"));
+  }, [syncLlmProvider]);
 
   const models: OpenRouterModel[] = convexModels
     ? convexModels.map((m) => ({
@@ -46,32 +112,98 @@ export default function ModelSettingsPage() {
         promptCost: m.promptCost,
       }))
     : [];
+  const sideSheetModels =
+    sheetModels.length > 0
+      ? sheetModels
+      : llmProvider === "openrouter"
+        ? models
+        : [];
 
   function getSelectedModel(role: ModelRole): string {
-    return effectiveConfig?.[role.key as keyof typeof effectiveConfig] ?? "";
+    return effectiveConfig?.[role.key as keyof typeof effectiveConfig]?.model ?? "";
   }
 
-  async function handleModelSelect(role: ModelRole, model: OpenRouterModel) {
-    setIsSavingModel(true);
+  function getRoleConfig(role: ModelRole) {
+    return effectiveConfig?.[role.key as keyof typeof effectiveConfig] ?? null;
+  }
+
+  /**
+   * Persist a reasoning level for one role. `null` clears the override so the
+   * role goes back to the provider/role default, which is why the value is sent
+   * explicitly rather than omitted — omitting a field means "leave unchanged".
+   */
+  async function saveReasoningForRole(
+    role: ModelRole,
+    level: ReasoningLevel | null,
+  ) {
+    const previous = effectiveConfig;
+    setSavingReasoningRole(role.key);
+    setSaveError(null);
+    // Optimistic: the control should track the click, not the round-trip.
+    setEffectiveConfig((prev) =>
+      prev
+        ? {
+            ...prev,
+            [role.key]: {
+              ...prev[role.key as keyof typeof prev],
+              ...(level ? { reasoning: level } : {}),
+              reasoningOverridden: level !== null,
+            },
+          }
+        : prev,
+    );
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      await saveModelConfig({ [role.key]: model.canonicalSlug }, token);
-      setEffectiveConfig((prev: EffectiveModelConfig | null) =>
-        prev ? { ...prev, [role.key]: model.canonicalSlug } : null
+      await saveModelConfig({ [`${role.key}Reasoning`]: level }, token);
+      // Clearing needs the server's recomputed default, which we can't derive.
+      if (level === null) setModelConfigReloadKey((key) => key + 1);
+    } catch (err) {
+      setEffectiveConfig(previous);
+      setSaveError(
+        err instanceof Error ? err.message : "Failed to save reasoning effort.",
       );
+    } finally {
+      setSavingReasoningRole(null);
+    }
+  }
+
+  async function saveModelForRole(role: ModelRole, modelId: string) {
+    const nextModelId = modelId.trim();
+    if (!nextModelId) return;
+
+    setIsSavingModel(true);
+    setSaveError(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      await saveModelConfig({ [role.key]: nextModelId }, token);
       setActiveSheet(null);
-    } catch {
-      // we will add toast later
+      // A new model can change the default reasoning level, so re-read rather
+      // than patching the slug in place.
+      setModelConfigReloadKey((key) => key + 1);
+    } catch (err) {
+      setSaveError(
+        err instanceof Error ? err.message : "Failed to save model preference.",
+      );
     } finally {
       setIsSavingModel(false);
     }
   }
 
   function openSideSheet(role: ModelRole) {
-    if (sheetModels.length === 0) {
-      getOpenRouterModels()
-        .then((models) => setSheetModels(models))
+    setSaveError(null);
+    const cacheKey = activeModelListCacheKeyRef.current || activeModelListCacheKey;
+    if (sheetModels.length === 0 || sheetModelsCacheKey !== cacheKey) {
+      setSheetModels([]);
+      setSheetModelsCacheKey(cacheKey);
+      getToken()
+        .then((token) => getLlmProviderModels(token ?? undefined))
+        .then((models) => {
+          if (activeModelListCacheKeyRef.current !== cacheKey) return;
+          setSheetModels(models);
+          setSheetModelsCacheKey(cacheKey);
+        })
         .catch(() => {
           // we will add toast later
         });
@@ -117,26 +249,55 @@ export default function ModelSettingsPage() {
   return (
     <SettingsPageLayout navItems={navItems}>
       <div className="w-full max-w-4xl">
-        <LocalCredentialsPanel />
+        <LocalCredentialsPanel onStatusChange={handleLocalCredentialsStatus} />
 
         <SettingsHeader
           title="Model Settings"
-          subtitle="Configure AI models for different tasks. Models are fetched from OpenRouter."
+          subtitle={
+            llmProvider === "openrouter"
+              ? "Configure AI models for different tasks. Models are fetched from OpenRouter."
+              : "Configure AI models for different tasks. Models are fetched from your selected provider."
+          }
         />
 
-        <div className="space-y-2">
+        <div className="space-y-3">
           {isLoading ? (
             <SkeletonList count={MODEL_ROLES.length} />
           ) : (
-            MODEL_ROLES.map((role) => (
-              <SettingsTile
-                key={role.key}
-                label={role.label}
-                description={role.description}
-                value={getSelectedModel(role)}
-                onClick={() => openSideSheet(role)}
-              />
-            ))
+            MODEL_ROLES.map((role) => {
+              const roleConfig = getRoleConfig(role);
+              return (
+                <div
+                  key={role.key}
+                  className="overflow-hidden rounded-xl border border-border bg-surface"
+                >
+                  <SettingsTile
+                    label={role.label}
+                    description={role.description}
+                    value={getSelectedModel(role)}
+                    onClick={() => openSideSheet(role)}
+                  />
+                  {roleConfig && (
+                    <>
+                      <div className="mx-4 border-t border-border" />
+                      <div className="px-4">
+                        <ReasoningControl
+                          value={roleConfig.reasoning}
+                          overridden={roleConfig.reasoningOverridden}
+                          disabled={savingReasoningRole === role.key}
+                          unsupportedReason={
+                            reasoningSupported
+                              ? undefined
+                              : "This provider doesn't expose a reasoning control, so effort is left to the model's own default."
+                          }
+                          onChange={(level) => void saveReasoningForRole(role, level)}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -144,21 +305,32 @@ export default function ModelSettingsPage() {
       {activeSheet && (
         <ModelSideSheet
           open={true}
-          onClose={() => !isSavingModel && setActiveSheet(null)}
+          onClose={() => {
+            if (isSavingModel) return;
+            setSaveError(null);
+            setActiveSheet(null);
+          }}
+          error={saveError}
           title={`Select ${activeSheet.role.label} Model`}
           selectedModel={getSelectedModel(activeSheet.role)}
-          models={sheetModels.length > 0 ? sheetModels : models}
-          onSelect={(slug) => {
-            const sourceModels = sheetModels.length > 0 ? sheetModels : models;
-            const model = sourceModels.find((m) => m.canonicalSlug === slug);
-            if (model) handleModelSelect(activeSheet.role, model);
-          }}
+          models={sideSheetModels}
+          onSelect={(slug) => saveModelForRole(activeSheet.role, slug)}
           onRefresh={async () => {
             setRefreshing(true);
             try {
-              const token = await getToken();
-              if (!token) throw new Error("Not authenticated");
-              const models = await refreshOpenRouterModels(token);
+              const provider = llmProvider ?? "openrouter";
+              const cacheKey = activeModelListCacheKeyRef.current || activeModelListCacheKey;
+              let models: OpenRouterModel[];
+              if (provider === "openrouter") {
+                const token = await getToken();
+                if (!token) throw new Error("Not authenticated");
+                models = await refreshOpenRouterModels(token);
+              } else {
+                const token = await getToken();
+                models = await getLlmProviderModels(token ?? undefined);
+              }
+              if (activeModelListCacheKeyRef.current !== cacheKey) return;
+              setSheetModelsCacheKey(cacheKey);
               setSheetModels(models);
             } catch {
               // we will add toast later

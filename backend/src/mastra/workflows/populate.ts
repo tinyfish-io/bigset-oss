@@ -1,11 +1,11 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { generateText } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { datasetContextSchema, populateColumnSchema } from "../../pipeline/populate.js";
 import { convex, internal } from "../../convex.js";
 import { DEFAULT_MODEL_IDS } from "../../config/models.js";
-import { requireOpenRouterApiKey } from "../../local-credentials.js";
+import { REASONING_LEVELS, createLanguageModel } from "../../config/llm.js";
+import { requireLlmProviderConfig } from "../../local-credentials.js";
 import { buildPopulateAgent } from "../agents/populate.js";
 import { RunMetrics } from "../run-metrics.js";
 import { saveRunMetrics } from "../save-run-metrics.js";
@@ -30,13 +30,23 @@ import { getSignal } from "../../abort-registry.js";
  * fresh UUID as a fallback) without coupling this schema to a specific
  * runtime.
  */
+/**
+ * One role's resolved model plus the reasoning level it should run at. The
+ * level travels with the model so every agent built during the run uses the
+ * same setting the request resolved, rather than re-reading config mid-run.
+ */
+const modelRoleSchema = z.object({
+  model: z.string().min(1),
+  reasoning: z.enum(REASONING_LEVELS),
+});
+
 export const authContextSchema = z.object({
   authorizedUserId: z.string().min(1),
   workflowRunId: z.string().min(1),
   modelConfig: z.object({
-    schemaInference: z.string().min(1),
-    populateOrchestrator: z.string().min(1),
-    investigateSubagent: z.string().min(1),
+    schemaInference: modelRoleSchema,
+    populateOrchestrator: modelRoleSchema,
+    investigateSubagent: modelRoleSchema,
   }),
   isBenchmark: z.boolean().optional(),
 });
@@ -109,15 +119,15 @@ Respond with EXACTLY one word: scraper or search`;
 
     let classification: "scraper" | "search" = "search";
     try {
-      const apiKey = await requireOpenRouterApiKey();
-      const openrouter = createOpenRouter({
-        apiKey,
-        baseURL: process.env.OPENROUTER_BASE_URL,
-      });
+      const llmConfig = await requireLlmProviderConfig();
       const modelSlug =
-        inputData.authContext?.modelConfig?.schemaInference ?? DEFAULT_MODEL_IDS.SCHEMA_INFERENCE;
+        inputData.authContext?.modelConfig?.schemaInference.model ?? llmConfig.defaultModel ?? DEFAULT_MODEL_IDS.SCHEMA_INFERENCE;
       const result = await generateText({
-        model: openrouter(modelSlug),
+        model: createLanguageModel(
+          llmConfig,
+          modelSlug,
+          inputData.authContext?.modelConfig?.schemaInference.reasoning,
+        ),
         prompt: classificationPrompt,
         maxOutputTokens: 10,
         abortSignal: getSignal(inputData.datasetId),
@@ -178,7 +188,7 @@ const buildPromptStep = createStep({
 
     const pkNote =
       pkColumns.length > 0
-        ? `\nPrimary key column(s): ${pkColumns.map((c) => `"${c.name}"`).join(", ")}. When calling run_subagent, you MUST pass these values in the primary_keys field. The subagent will research and fill in the remaining columns.`
+        ? `\nPrimary key column(s): ${pkColumns.map((c) => `"${c.name}"`).join(", ")}. When calling run_subagent, you MUST pass these values in the primary_keys field as an array of {"column": "column_name", "value": "value"} entries. The subagent will research and fill in the remaining columns.`
         : "";
 
     let manifestNote = "";
@@ -206,6 +216,7 @@ ${columnsDesc}${pkNote}${manifestNote}${strategyNote}
 
 Search the web broadly to find real entities that fit this dataset topic.
 For each lead you find, call run_subagent with the primary key values and any context/URLs you have found.
+Example primary_keys format: [{"column": "company_name", "value": "Stripe"}]
 If run_subagent returns ROW_LIMIT_REACHED, stop immediately and do not make any more tool calls.
 Stop the populate run as soon as the dataset reaches ${inputData.maxRowCount} rows.`;
 
@@ -251,7 +262,7 @@ const agentStep = createStep({
         inputData.authorizedDatasetId,
         inputData.authContext,
         inputData.columns,
-        await requireOpenRouterApiKey(),
+        await requireLlmProviderConfig(),
         inputData.maxRowCount,
         metrics,
       );

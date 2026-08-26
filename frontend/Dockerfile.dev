@@ -10,4 +10,7 @@ RUN bun install
 
 COPY --chown=node:node . .
 
-CMD ["bun", "dev", "--hostname", "0.0.0.0", "--port", "3500"]
+# Run Next directly instead of through Bun's script runner, and force webpack
+# for local Docker dev. Next 16 defaults to Turbopack, which can get OOM-killed
+# in constrained Docker Desktop setups during the first page compile.
+CMD ["node", "../scripts/with-root-env.mjs", "./node_modules/.bin/next", "dev", "--webpack", "--hostname", "0.0.0.0", "--port", "3500"]

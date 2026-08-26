@@ -1,14 +1,21 @@
 import { internalMutation, internalQuery } from "./_generated/server.js";
 import { v } from "convex/values";
+import {
+  LLM_PROVIDER_TYPES,
+  LOCAL_CREDENTIAL_SERVICES,
+} from "../lib/llm-provider-types.js";
 
 const serviceValidator = v.union(
-  v.literal("tinyfish"),
-  v.literal("openrouter"),
+  ...LOCAL_CREDENTIAL_SERVICES.map((service) => v.literal(service)),
 );
 
 const connectionMethodValidator = v.union(
   v.literal("api_key"),
   v.literal("oauth"),
+);
+
+const llmProviderValidator = v.union(
+  ...LLM_PROVIDER_TYPES.map((provider) => v.literal(provider)),
 );
 
 export const getInternal = internalQuery({
@@ -24,9 +31,12 @@ export const getInternal = internalQuery({
 export const upsertInternal = internalMutation({
   args: {
     service: serviceValidator,
-    keychainAccount: v.string(),
+    keychainAccount: v.optional(v.string()),
     connectionMethod: connectionMethodValidator,
     verifiedAt: v.number(),
+    llmProvider: v.optional(llmProviderValidator),
+    llmBaseUrl: v.optional(v.string()),
+    llmDefaultModel: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -35,20 +45,53 @@ export const upsertInternal = internalMutation({
       .unique();
 
     const update = {
-      keychainAccount: args.keychainAccount,
+      ...(args.keychainAccount !== undefined
+        ? { keychainAccount: args.keychainAccount }
+        : {}),
       connectionMethod: args.connectionMethod,
       verifiedAt: args.verifiedAt,
       updatedAt: Date.now(),
     };
+    const providerChanged =
+      args.llmProvider !== undefined &&
+      args.llmProvider !== existing?.llmProvider;
+    const llmPatch =
+      args.llmProvider !== undefined
+        ? {
+            llmProvider: args.llmProvider,
+            ...(providerChanged
+              ? {
+                  // Clear provider-scoped values when switching providers.
+                  llmBaseUrl: args.llmBaseUrl,
+                  llmDefaultModel: args.llmDefaultModel,
+                }
+              : {
+                  ...(args.llmBaseUrl !== undefined
+                    ? { llmBaseUrl: args.llmBaseUrl }
+                    : {}),
+                  ...(args.llmDefaultModel !== undefined
+                    ? { llmDefaultModel: args.llmDefaultModel }
+                    : {}),
+                }),
+          }
+        : {};
+    const llmInsert = args.llmProvider !== undefined
+      ? {
+          llmProvider: args.llmProvider,
+          ...(args.llmBaseUrl !== undefined ? { llmBaseUrl: args.llmBaseUrl } : {}),
+          ...(args.llmDefaultModel !== undefined ? { llmDefaultModel: args.llmDefaultModel } : {}),
+        }
+      : {};
 
     if (existing) {
-      await ctx.db.patch(existing._id, { ...update, apiKey: undefined });
+      await ctx.db.patch(existing._id, { ...update, ...llmPatch, apiKey: undefined });
       return existing._id;
     }
 
     return await ctx.db.insert("localCredentials", {
       service: args.service,
       ...update,
+      ...llmInsert,
     });
   },
 });

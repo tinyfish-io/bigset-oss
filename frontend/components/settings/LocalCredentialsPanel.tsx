@@ -10,52 +10,68 @@ import {
 } from "lucide-react";
 import {
   getLocalSetupStatus,
-  saveOpenRouterApiKey,
+  saveLlmProviderConfig,
   saveTinyFishApiKey,
+  type LlmProviderType,
   type LocalSetupStatus,
   type ServiceSetupStatus,
 } from "@/lib/backend";
 import { isLocalMode } from "@/lib/app-mode";
+import {
+  LlmProviderBrand,
+  LlmProviderSelector,
+  displayBaseUrl,
+  llmProviderLabelForStatus,
+  llmProviderOption,
+  localLlmPresetForBaseUrl,
+  type LlmProviderOptionValue,
+} from "@/components/settings/llm-providers";
+import {
+  beginOpenRouterOAuth,
+  useCanUseOpenRouterOAuth,
+} from "@/lib/openrouter-oauth";
 
-type ServiceName = "tinyfish" | "openrouter";
+type ServiceName = "tinyfish" | "llm";
 
-const SERVICE_COPY = {
+type ServiceCopy = {
+  modalTitle: string;
+  description: string;
+  inputPlaceholder: string;
+  modalDescription: string;
+  helperHref?: string;
+  helperLabel: string;
+  helperDescription: string;
+};
+
+const SERVICE_COPY: Record<ServiceName, ServiceCopy> = {
   tinyfish: {
-    modalTitle: "TinyFish API key",
+    modalTitle: "Connect TinyFish",
     description:
-      "BigSet uses TinyFish's best-in-class search API to unlock real-time information.",
+      "Connect TinyFish for live search and source pages.",
     inputPlaceholder: "tf_...",
     modalDescription: "BigSet verifies the key and stores it in your OS keychain.",
     helperHref:
       "https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2",
-    helperLabel: "Need a TinyFish key?",
-    helperDescription: "Open the TinyFish API keys page",
+    helperLabel: "Get your TinyFish API Key",
+    helperDescription: "",
   },
-  openrouter: {
-    modalTitle: "OpenRouter API key",
+  llm: {
+    modalTitle: "Model provider",
     description:
-      "BigSet uses OpenRouter's API to power BigSet with AI model access.",
-    inputPlaceholder: "sk-or-...",
+      "Choose the provider BigSet uses for schema generation and agents.",
+    inputPlaceholder: "API key",
     modalDescription:
-      "BigSet verifies the key and stores it in your OS keychain.",
-    helperHref: "https://openrouter.ai/settings/keys",
-    helperLabel: "Need an OpenRouter key?",
-    helperDescription: "Open the OpenRouter keys page",
+      "Select a provider. BigSet stores local credentials in your OS keychain.",
+    helperLabel: "",
+    helperDescription: "",
   },
-} satisfies Record<
-  ServiceName,
-  {
-    modalTitle: string;
-    description: string;
-    inputPlaceholder: string;
-    modalDescription: string;
-    helperHref: string;
-    helperLabel: string;
-    helperDescription: string;
-  }
->;
+};
 
-export function LocalCredentialsPanel() {
+export function LocalCredentialsPanel({
+  onStatusChange,
+}: {
+  onStatusChange?: (status: LocalSetupStatus) => void;
+} = {}) {
   const [status, setStatus] = useState<LocalSetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -67,7 +83,10 @@ export function LocalCredentialsPanel() {
     let active = true;
     getLocalSetupStatus()
       .then((next) => {
-        if (active) setStatus(next);
+        if (active) {
+          setStatus(next);
+          onStatusChange?.(next);
+        }
       })
       .catch((err) => {
         if (active) {
@@ -85,7 +104,7 @@ export function LocalCredentialsPanel() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [onStatusChange]);
 
   if (!isLocalMode) return null;
 
@@ -96,8 +115,8 @@ export function LocalCredentialsPanel() {
           Service credentials
         </h2>
         <p className="mt-1 text-sm leading-6 text-muted">
-          Add TinyFish and OpenRouter access for live datasets. Local keys stay
-          in your OS keychain.
+          Add TinyFish and your preferred LLM provider for live datasets. Local
+          keys stay in your OS keychain.
         </p>
       </div>
 
@@ -106,7 +125,7 @@ export function LocalCredentialsPanel() {
           {loadError}
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-4 lg:grid-cols-2">
           <CredentialCard
             service="tinyfish"
             status={status?.services.tinyfish}
@@ -114,10 +133,10 @@ export function LocalCredentialsPanel() {
             onApiKey={() => setModal("tinyfish")}
           />
           <CredentialCard
-            service="openrouter"
-            status={status?.services.openrouter}
+            service="llm"
+            status={status?.services.llm}
             loading={loading}
-            onApiKey={() => setModal("openrouter")}
+            onApiKey={() => setModal("llm")}
           />
         </div>
       )}
@@ -125,9 +144,11 @@ export function LocalCredentialsPanel() {
       {modal && (
         <ApiKeyModal
           service={modal}
+          status={status}
           onClose={() => setModal(null)}
           onSaved={(next) => {
             setStatus(next);
+            onStatusChange?.(next);
             setModal(null);
           }}
         />
@@ -150,13 +171,25 @@ function CredentialCard({
   const copy = SERVICE_COPY[service];
   const connected = status?.configured ?? false;
   const detail = useCredentialDetail(status, loading);
+  const primaryLabel =
+    service === "llm"
+      ? connected
+        ? "Update provider"
+        : "Choose provider"
+      : connected
+        ? "Update key"
+        : "Add API key";
 
   return (
-    <section className="border border-border bg-surface p-5 sm:p-6">
+    <section className="flex min-h-[290px] flex-col border border-border bg-surface p-5 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex h-9 items-center">
-            <ServiceBrand service={service} />
+            <ServiceBrand
+              service={service}
+              provider={connected ? status?.provider : undefined}
+              baseUrl={connected ? status?.baseUrl : undefined}
+            />
           </div>
           <p className="mt-2 text-sm text-muted">{detail}</p>
         </div>
@@ -167,30 +200,48 @@ function CredentialCard({
         {copy.description}
       </p>
 
-      <div className="mt-6 flex flex-col gap-3">
+      <div className="mt-auto flex flex-col gap-3 pt-6">
         <button
           type="button"
           onClick={onApiKey}
           className="inline-flex w-fit items-center gap-2 rounded-lg border border-accent bg-accent px-4 py-2.5 text-sm font-semibold text-accent-text transition-opacity hover:opacity-90"
         >
           <KeyRound className="size-4" />
-          {connected ? "Update key" : "Add API key"}
+          {primaryLabel}
         </button>
-        <a
-          href={copy.helperHref}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex w-fit items-center gap-1.5 text-sm font-semibold text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
-        >
-          {copy.helperLabel} {copy.helperDescription}
-          <ExternalLink className="size-4 shrink-0" />
-        </a>
+        {copy.helperHref && copy.helperLabel ? (
+          <a
+            href={copy.helperHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex w-fit items-center gap-1.5 text-sm font-semibold text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+          >
+            {copy.helperLabel}
+            {copy.helperDescription ? ` ${copy.helperDescription}` : null}
+            <ExternalLink className="size-4 shrink-0" />
+          </a>
+        ) : copy.helperLabel ? (
+          <p className="text-sm leading-6 text-muted">
+            <span className="font-semibold text-foreground">
+              {copy.helperLabel}:
+            </span>{" "}
+            {copy.helperDescription}
+          </p>
+        ) : null}
       </div>
     </section>
   );
 }
 
-function ServiceBrand({ service }: { service: ServiceName }) {
+function ServiceBrand({
+  service,
+  provider,
+  baseUrl,
+}: {
+  service: ServiceName;
+  provider?: LlmProviderType;
+  baseUrl?: string;
+}) {
   if (service === "tinyfish") {
     return (
       <>
@@ -208,35 +259,7 @@ function ServiceBrand({ service }: { service: ServiceName }) {
     );
   }
 
-  return <OpenRouterBrand />;
-}
-
-function OpenRouterBrand() {
-  return (
-    <div className="flex items-center gap-2 text-black dark:invert">
-      <svg
-        width="24"
-        height="24"
-        viewBox="0 0 512 512"
-        xmlns="http://www.w3.org/2000/svg"
-        fill="currentColor"
-        stroke="currentColor"
-        aria-hidden="true"
-      >
-        <path
-          d="M3 248.945C18 248.945 76 236 106 219C136 202 136 202 198 158C276.497 102.293 332 120.945 423 120.945"
-          strokeWidth="90"
-        />
-        <path d="M511 121.5L357.25 210.268L357.25 32.7324L511 121.5Z" />
-        <path
-          d="M0 249C15 249 73 261.945 103 278.945C133 295.945 133 295.945 195 339.945C273.497 395.652 329 377 420 377"
-          strokeWidth="90"
-        />
-        <path d="M508 376.445L354.25 287.678L354.25 465.213L508 376.445Z" />
-      </svg>
-      <span className="text-xl font-semibold tracking-tight">OpenRouter</span>
-    </div>
-  );
+  return <LlmProviderBrand provider={provider} baseUrl={baseUrl} />;
 }
 
 function StatusLabel({
@@ -272,35 +295,86 @@ function useCredentialDetail(
   return useMemo(() => {
     if (loading) return "Checking connection...";
     if (!status?.configured) return "Not connected";
+    const llmLabel = llmProviderLabelForStatus(status);
+    if (llmLabel) return llmLabel;
     if (status.connectionMethod === "oauth") return "Connected through OAuth";
     if (status.source === "env") return "Connected through .env";
     return "Connected through API key";
-  }, [loading, status?.configured, status?.connectionMethod, status?.source]);
+  }, [loading, status]);
 }
 
 function ApiKeyModal({
   service,
+  status,
   onClose,
   onSaved,
 }: {
   service: ServiceName;
+  status: LocalSetupStatus | null;
   onClose: () => void;
   onSaved: (status: LocalSetupStatus) => void;
 }) {
+  const initialProvider = initialLlmProviderSelection(status);
   const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] =
+    useState<LlmProviderOptionValue>(initialProvider);
+  const [baseUrl, setBaseUrl] = useState(() =>
+    initialBaseUrl(status, initialProvider),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const copy = SERVICE_COPY[service];
   const isTinyFish = service === "tinyfish";
+  const providerCopy = llmProviderOption(provider);
+  const providerStatuses = status?.services.llmProviders;
+  const resolvedProvider = providerCopy.provider;
+  const selectedProviderStatus = providerStatuses?.[resolvedProvider];
+  const selectedProviderConfigured =
+    selectedProviderStatus?.configured ??
+    (status?.services.llm.configured &&
+      status.services.llm.provider === resolvedProvider) ??
+    false;
+  const selectedRequiresBaseUrl = providerCopy.requiresBaseUrl ?? false;
+  const selectedRequiresApiKey = providerCopy.requiresApiKey ?? resolvedProvider !== "custom";
+  const selectedUsesPresetBaseUrl = !!providerCopy.defaultBaseUrl;
+  const showOpenRouterOAuth = useCanUseOpenRouterOAuth();
+  const isCustomEndpoint = provider === "custom";
+
+  function handleProviderChange(next: LlmProviderOptionValue) {
+    setProvider(next);
+    setBaseUrl(initialBaseUrl(status, next));
+    setApiKey("");
+    setError(null);
+  }
 
   async function handleSubmit() {
-    if (!apiKey.trim() || saving) return;
+    if (saving) return;
+    if (isTinyFish && !apiKey.trim()) return;
+    if (!isTinyFish && selectedRequiresApiKey && !apiKey.trim() && !selectedProviderConfigured) {
+      return;
+    }
+    if (!isTinyFish && selectedRequiresBaseUrl && !baseUrl.trim() && !selectedProviderConfigured) {
+      setError("Custom providers require a base URL");
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
       const next = isTinyFish
         ? await saveTinyFishApiKey(apiKey.trim())
-        : await saveOpenRouterApiKey(apiKey.trim());
+        : await saveLlmProviderConfig({
+            provider: resolvedProvider,
+            apiKey:
+              selectedRequiresApiKey || provider === "custom"
+                ? apiKey.trim()
+                : "",
+            defaultModel: providerCopy.defaultModel,
+            baseUrl:
+              selectedRequiresBaseUrl && baseUrl.trim()
+                ? baseUrl.trim()
+                : undefined,
+          });
       onSaved(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
@@ -308,6 +382,31 @@ function ApiKeyModal({
       setSaving(false);
     }
   }
+
+  const helperHref = isTinyFish ? copy.helperHref : providerCopy.helperHref;
+  const helperLabel = isTinyFish
+    ? "Get your TinyFish API Key"
+    : isCustomEndpoint
+      ? "OpenAI API docs"
+      : selectedRequiresBaseUrl
+      ? "Provider docs"
+      : "Get a key";
+  const showApiKeyHelper =
+    !!helperHref && (isTinyFish || selectedRequiresApiKey);
+  const canSubmit =
+    !saving &&
+    (isTinyFish
+      ? !!apiKey.trim()
+      : selectedRequiresBaseUrl
+        ? !!baseUrl.trim() || selectedProviderConfigured
+        : !selectedRequiresApiKey || !!apiKey.trim() || selectedProviderConfigured);
+  const usingSavedProvider =
+    !isTinyFish &&
+    selectedProviderConfigured &&
+    !apiKey.trim() &&
+    (!selectedRequiresBaseUrl ||
+      !baseUrl.trim() ||
+      baseUrl.trim() === displayBaseUrl(selectedProviderStatus?.baseUrl));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -320,12 +419,16 @@ function ApiKeyModal({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-lg border border-border bg-surface shadow-2xl"
+        className={`relative flex w-full max-w-3xl flex-col border border-border bg-surface shadow-2xl ${
+          isTinyFish ? "max-h-[90vh]" : "h-[calc(100vh-2rem)] max-h-[760px]"
+        }`}
       >
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div>
-            <h2 className="text-sm font-semibold">{copy.modalTitle}</h2>
-            <p className="mt-1 text-xs text-muted">{copy.modalDescription}</p>
+            <h2 className="text-base font-semibold">{copy.modalTitle}</h2>
+            <p className="mt-1 text-sm leading-6 text-muted">
+              {copy.modalDescription}
+            </p>
           </div>
           <button
             type="button"
@@ -337,47 +440,183 @@ function ApiKeyModal({
           </button>
         </div>
 
-        <div className="space-y-4 px-5 py-5">
-          <label className="block text-xs font-medium text-muted">
-            API key
-            <input
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              type="password"
-              autoFocus
-              className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-foreground/30"
-              placeholder={copy.inputPlaceholder}
-            />
-          </label>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+          {!isTinyFish && (
+            <fieldset>
+              <legend className="text-sm font-semibold text-foreground">
+                Provider
+              </legend>
+              <LlmProviderSelector
+                value={provider}
+                onChange={handleProviderChange}
+              />
+            </fieldset>
+          )}
+
+          {!isTinyFish && provider === "openrouter" && showOpenRouterOAuth && (
+            <div className="flex flex-col gap-3 border border-border bg-background/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  OpenRouter OAuth
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  Connect through OpenRouter without pasting a key.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void beginOpenRouterOAuth(currentReturnPath())}
+                className="inline-flex items-center justify-center rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-foreground/[0.04]"
+              >
+                Connect with OAuth
+              </button>
+            </div>
+          )}
+
+          {!isTinyFish && selectedRequiresBaseUrl && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  htmlFor="settings-provider-base-url"
+                  className="text-sm font-medium text-foreground"
+                >
+                  Base URL
+                </label>
+                {helperHref && (
+                  <a
+                    href={helperHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-muted hover:text-foreground"
+                  >
+                    {helperLabel}
+                    <ExternalLink className="size-3" />
+                  </a>
+                )}
+              </div>
+              <input
+                id="settings-provider-base-url"
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted/70 focus:border-foreground/30"
+                placeholder={providerCopy.defaultBaseUrl ?? "http://localhost:1234/v1"}
+              />
+              <span className="mt-1 block text-xs leading-5 text-muted">
+                {selectedUsesPresetBaseUrl
+                  ? "Default local endpoint. Change it only if your server uses another port."
+                  : "Use the OpenAI-compatible `/v1` endpoint for local or experimental providers."}
+              </span>
+            </div>
+          )}
+
+          {(isTinyFish || selectedRequiresApiKey || provider === "custom") && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  htmlFor="settings-provider-api-key"
+                  className="text-sm font-medium text-foreground"
+                >
+                  API key{!isTinyFish && resolvedProvider === "custom" ? " (optional)" : ""}
+                </label>
+                {showApiKeyHelper && (
+                  <a
+                    href={helperHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-muted hover:text-foreground"
+                  >
+                    {helperLabel}
+                    <ExternalLink className="size-3" />
+                  </a>
+                )}
+              </div>
+              <input
+                id="settings-provider-api-key"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                type="password"
+                autoFocus={isTinyFish}
+                disabled={!isTinyFish && !selectedRequiresApiKey && provider !== "custom"}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted/70 focus:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
+                placeholder={isTinyFish ? copy.inputPlaceholder : providerCopy.apiKeyPlaceholder}
+              />
+            </div>
+          )}
 
           {error && (
             <div className="border border-red-500/30 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
               {error}
             </div>
           )}
+        </div>
 
-          <div className="flex items-center justify-between gap-3 pt-2">
-            <a
-              href={copy.helperHref}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-            >
-              Get a key
-              <ExternalLink className="size-3" />
-            </a>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!apiKey.trim() || saving}
-              className="inline-flex items-center gap-2 rounded-lg border border-accent bg-accent px-4 py-2 text-xs font-semibold text-accent-text transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
-            >
-              {saving && <Loader2 className="size-3.5 animate-spin" />}
-              Verify and save to keychain
-            </button>
-          </div>
+        <div className="flex shrink-0 justify-end border-t border-border bg-surface px-5 py-4">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="inline-flex items-center gap-2 rounded-lg border border-accent bg-accent px-4 py-2 text-xs font-semibold text-accent-text transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            {saving && <Loader2 className="size-3.5 animate-spin" />}
+            {usingSavedProvider ? "Use saved provider" : "Verify and save"}
+          </button>
         </div>
       </div>
     </div>
   );
+}
+
+function initialLlmProviderSelection(
+  status: LocalSetupStatus | null,
+): LlmProviderOptionValue {
+  if (status?.services.llm.configured && status.services.llm.provider) {
+    if (status.services.llm.provider === "custom") {
+      return (
+        localLlmPresetForBaseUrl(status.services.llm.baseUrl)?.value ?? "custom"
+      );
+    }
+    return status.services.llm.provider;
+  }
+
+  const savedProvider = (Object.entries(status?.services.llmProviders ?? {}) as [
+    LlmProviderType,
+    ServiceSetupStatus,
+  ][]).find(([, providerStatus]) => providerStatus.configured)?.[0];
+
+  if (savedProvider === "custom") {
+    return (
+      localLlmPresetForBaseUrl(status?.services.llmProviders?.custom?.baseUrl)
+        ?.value ?? "custom"
+    );
+  }
+
+  return savedProvider ?? "openrouter";
+}
+
+function initialBaseUrl(
+  status: LocalSetupStatus | null,
+  provider: LlmProviderOptionValue,
+) {
+  const option = llmProviderOption(provider);
+  const activeStatus = status?.services.llm;
+  const activeSelection =
+    activeStatus?.provider === "custom"
+      ? (localLlmPresetForBaseUrl(activeStatus.baseUrl)?.value ?? "custom")
+      : activeStatus?.provider;
+  const providerStatus =
+    status?.services.llmProviders?.[option.provider] ??
+    (activeSelection === provider ? activeStatus : undefined);
+  const savedBaseUrl = displayBaseUrl(
+    providerStatus?.baseUrl,
+  );
+  if (option.defaultBaseUrl) return savedBaseUrl || option.defaultBaseUrl;
+  if (option.provider === "custom") {
+    return savedBaseUrl;
+  }
+  return "";
+}
+
+function currentReturnPath() {
+  if (typeof window === "undefined") return "/setup";
+  return `${window.location.pathname}${window.location.search}`;
 }

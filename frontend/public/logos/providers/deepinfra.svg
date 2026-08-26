@@ -1,0 +1,29 @@
+<svg role="img" viewBox="0 0 28 32" xmlns="http://www.w3.org/2000/svg">
+  <title>DeepInfra</title>
+  <g fill="none" stroke="#191919" stroke-linecap="round" stroke-width="1.8">
+    <path d="M7.3 6.2 9.4 5.4"/>
+    <path d="M7.3 9.5 9.4 10.3"/>
+    <path d="M17.8 5.4 19.9 6.2"/>
+    <path d="M17.8 10.3 19.9 9.5"/>
+    <path d="M7.3 14.2 9.4 13.4"/>
+    <path d="M7.3 17.4 9.4 18.2"/>
+    <path d="M17.8 13.4 19.9 14.2"/>
+    <path d="M17.8 18.2 19.9 17.4"/>
+    <path d="M7.3 22.2 9.4 21.4"/>
+    <path d="M7.3 25.4 9.4 26.2"/>
+    <path d="M17.8 21.4 19.9 22.2"/>
+    <path d="M17.8 26.2 19.9 25.4"/>
+  </g>
+  <g fill="#191919">
+    <circle cx="2.83" cy="7.83" r="2.83"/>
+    <circle cx="2.83" cy="15.82" r="2.83"/>
+    <circle cx="2.83" cy="23.81" r="2.83"/>
+    <circle cx="13.6" cy="3.83" r="2.83"/>
+    <circle cx="13.6" cy="11.82" r="2.83"/>
+    <circle cx="13.6" cy="19.82" r="2.83"/>
+    <circle cx="13.6" cy="27.81" r="2.83"/>
+    <circle cx="24.38" cy="7.83" r="2.83"/>
+    <circle cx="24.38" cy="15.82" r="2.83"/>
+    <circle cx="24.38" cy="23.81" r="2.83"/>
+  </g>
+</svg>

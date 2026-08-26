@@ -6,6 +6,12 @@ import type { AuthContext } from "../workflows/populate.js";
 import type { PopulateColumn } from "../../pipeline/populate.js";
 import type { RunMetrics } from "../run-metrics.js";
 import { getSignal } from "../../abort-registry.js";
+import type { LlmProviderConfig } from "../../config/llm.js";
+
+const keyValueSchema = z.object({
+  column: z.string().min(1),
+  value: z.string().min(1),
+});
 
 const investigateInputSchema = z.object({
   entity_hint: z
@@ -14,12 +20,10 @@ const investigateInputSchema = z.object({
       "What entity to look for, e.g. 'head of GTM at Appcharge' or 'Starbucks coffee products on Amazon'",
     ),
   primary_keys: z
-    .record(z.string(), z.string())
-    .refine((v) => Object.keys(v).length > 0, {
-      message: "primary_keys must include at least one primary-key value",
-    })
+    .array(keyValueSchema)
+    .min(1, "primary_keys must include at least one primary-key value")
     .describe(
-      "REQUIRED: the primary key column value(s) for this entity. e.g. {\"Company Name\": \"Stripe\"} or {\"First Name\": \"John\", \"Last Name\": \"Doe\"}. You MUST provide at least the primary key values you have found.",
+      'REQUIRED: primary key values as {"column": "column_name", "value": "value"} entries. e.g. [{"column": "company_name", "value": "Stripe"}]. You MUST provide at least the primary key values you have found.',
     ),
   context: z
     .string()
@@ -75,7 +79,7 @@ export function buildSubagentTool(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
-  openRouterApiKey: string,
+  llmConfig: LlmProviderConfig,
   maxRowCount: number,
   metrics?: RunMetrics,
 ) {
@@ -100,6 +104,7 @@ export function buildSubagentTool(
         }
 
         if (metrics) metrics.investigateCalls++;
+
         console.log(
           `[run_subagent] spawning subagent user=${authContext.authorizedUserId} run=${authContext.workflowRunId} dataset=${authorizedDatasetId} entity="${entity_hint}" pk=${JSON.stringify(primary_keys)}`,
         );
@@ -108,11 +113,11 @@ export function buildSubagentTool(
           authorizedDatasetId,
           authContext,
           columns,
-          openRouterApiKey,
+          llmConfig,
         );
 
-        const pkBlock = Object.entries(primary_keys)
-          .map(([k, v]) => `- ${k}: ${v}`)
+        const pkBlock = primary_keys
+          .map(({ column, value }) => `- ${column}: ${value}`)
           .join("\n");
         const urlsBlock =
           urls && urls.length > 0

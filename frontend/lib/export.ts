@@ -2,9 +2,10 @@
  * Client-side exporters for dataset views.
  *
  * CSV: hand-rolled, no dependencies. Tiny payload, fast.
- * XLSX: dynamically imports `xlsx` (SheetJS) on demand so the ~700KB
- *       library doesn't enter the main bundle. Users who never click
- *       "Export XLSX" never download it.
+ * XLSX: dynamically imports `@e965/xlsx` (a maintained SheetJS republish —
+ *       the `xlsx` package on npm is frozen at an abandoned 0.18.5) on demand
+ *       so the ~700KB library doesn't enter the main bundle. Users who never
+ *       click "Export XLSX" never download it.
  */
 
 export interface ExportColumn {
@@ -89,7 +90,7 @@ export async function downloadXLSX(
   rows: ExportRow[],
 ): Promise<void> {
   // Dynamic import — keeps the ~700KB xlsx library out of the main bundle.
-  const XLSX = await import("xlsx");
+  const XLSX = await import("@e965/xlsx");
 
   // sheet_aoa expects a 2-D array. First row is headers.
   const aoa: unknown[][] = [

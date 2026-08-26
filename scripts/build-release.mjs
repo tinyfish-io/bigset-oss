@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import {
   cp,
   mkdir,
+  readdir,
   rm,
   stat,
   writeFile,
@@ -222,6 +223,12 @@ async function copyConvexRuntime() {
   await cp(join(frontendDir, "convex"), join(packageRoot, "frontend", "convex"), {
     recursive: true,
   });
+  // Convex modules import shared types from the sibling lib/ directory (e.g.
+  // schema.ts -> ../lib/llm-provider-types.js). Without it, `convex deploy`
+  // fails to resolve at install time even though the build itself succeeds.
+  await cp(join(frontendDir, "lib"), join(packageRoot, "frontend", "lib"), {
+    recursive: true,
+  });
 
   for (const packageName of convexRuntimePackages) {
     const source = join(frontendDir, "node_modules", packageName);
@@ -229,6 +236,42 @@ async function copyConvexRuntime() {
     await cp(source, join(packageRoot, "frontend", "node_modules", packageName), {
       recursive: true,
     });
+  }
+}
+
+// The release build can succeed while the packaged Convex tree is unusable:
+// `convex deploy` only runs at install time, so an import reaching a file we
+// never copied surfaces on the user's machine, not here. Resolve every
+// relative import in the packaged tree up front and fail the build instead.
+async function verifyConvexPackage() {
+  const requireFromBackend = createRequire(join(backendDir, "package.json"));
+  const esbuild = requireFromBackend("esbuild");
+  const convexDir = join(packageRoot, "frontend", "convex");
+
+  const entryPoints = (await readdir(convexDir, { recursive: true }))
+    .filter((name) => name.endsWith(".ts") || name.endsWith(".js"))
+    .map((name) => join(convexDir, name));
+
+  try {
+    await esbuild.build({
+      entryPoints,
+      bundle: true,
+      write: false,
+      platform: "node",
+      format: "esm",
+      logLevel: "silent",
+      // Bare specifiers resolve from node_modules at runtime; we only care
+      // that relative imports point at files that actually shipped.
+      packages: "external",
+      outdir: join(workDir, "convex-verify"),
+    });
+  } catch (err) {
+    const details = (err.errors ?? [])
+      .map((e) => `  ${e.text}${e.location ? ` (${e.location.file}:${e.location.line})` : ""}`)
+      .join("\n");
+    throw new Error(
+      `Packaged Convex sources have unresolved imports, so \`convex deploy\` would fail on the user's machine:\n${details}`,
+    );
   }
 }
 
@@ -277,6 +320,8 @@ async function main() {
     { recursive: true },
   );
   await copyConvexRuntime();
+  console.log("Verifying packaged Convex sources...");
+  await verifyConvexPackage();
   await writeStartScript();
   await writeReadme();
 
