@@ -188,7 +188,7 @@ ensure-admin-key:
 	fi
 
 convex-env:
-	@test -f .env || { echo "Error: .env not found. Run: cp .env.example .env"; exit 1; }
+	@test -f .env || { echo "Error: .env not found. Run: make dev (it auto-creates a local .env)"; exit 1; }
 	@prod="$$(grep '^PROD=' .env | cut -d= -f2-)"; \
 	admin_key="$$(grep '^CONVEX_SELF_HOSTED_ADMIN_KEY=' .env | cut -d= -f2-)"; \
 	if [[ -z "$$admin_key" ]]; then \
@@ -212,7 +212,7 @@ convex-env:
 	'npx convex env set CLERK_JWT_ISSUER_DOMAIN "$$CLERK_JWT_ISSUER_DOMAIN" --url $(CONVEX_CLI_URL) --admin-key "$$CONVEX_SELF_HOSTED_ADMIN_KEY"'
 
 convex-push:
-	@test -f .env || { echo "Error: .env not found. Run: cp .env.example .env"; exit 1; }
+	@test -f .env || { echo "Error: .env not found. Run: make dev (it auto-creates a local .env)"; exit 1; }
 	@admin_key="$$(grep '^CONVEX_SELF_HOSTED_ADMIN_KEY=' .env | cut -d= -f2-)"; \
 	if [[ -z "$$admin_key" ]]; then \
 		echo "Error: CONVEX_SELF_HOSTED_ADMIN_KEY is missing in root .env"; \
@@ -223,7 +223,7 @@ convex-push:
 	'npx convex deploy --url $(CONVEX_CLI_URL) --admin-key "$$CONVEX_SELF_HOSTED_ADMIN_KEY"'
 
 seed-public-datasets:
-	@test -f .env || { echo "Error: .env not found. Run: cp .env.example .env"; exit 1; }
+	@test -f .env || { echo "Error: .env not found. Run: make dev (it auto-creates a local .env)"; exit 1; }
 	@cd frontend && node ../scripts/with-root-env.mjs npx convex run publicSeed:seedPublicDatasets
 
 down: stop-local-keychain

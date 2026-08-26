@@ -6,7 +6,7 @@ Frontend on :3500, backend on :3501, Mastra Studio on :4111, Convex dashboard on
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and fill in your keys:
+1. `make dev` auto-creates a local `.env` on first run (no template to copy). Fill in your keys there:
    - `TINYFISH_API_KEY` — from https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2
    - `OPENROUTER_API_KEY` — from https://openrouter.ai/settings/keys
    - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — from Clerk API Keys
