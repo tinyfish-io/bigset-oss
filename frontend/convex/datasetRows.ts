@@ -61,6 +61,63 @@ export const listByOwnedDatasetInternal = internalQuery({
 });
 
 /**
+ * Filtered row query — applies a single column=value filter server-side
+ * before returning rows.
+ *
+ * Supports two match modes:
+ *   - "contains" : case-insensitive substring match (default)
+ *   - "exact"    : case-insensitive full-string equality
+ *
+ * Passing `null` for the filter argument returns all rows identically to
+ * `listByDataset`, which lets the frontend reuse one stable query hook.
+ *
+ * PERFORMANCE NOTE: `datasetRows.data` is a `v.record(v.string(), v.any())`
+ * and is not indexed per-field. The filter loop performs a full scan over
+ * every row in the dataset. This is acceptable for datasets up to ~100 k
+ * rows but will become a bottleneck at scale. A future optimisation would
+ * layer in a Convex vector index or a dedicated search table.
+ */
+export const listByDatasetFiltered = query({
+  args: {
+    datasetId: v.id("datasets"),
+    /**
+     * Single filter predicate, or `null` to return all rows.
+     * A `null` filter is treated identically to calling `listByDataset`.
+     */
+    filter: v.nullable(
+      v.object({
+        column: v.string(),
+        value: v.string(),
+        matchType: v.optional(
+          v.union(v.literal("contains"), v.literal("exact")),
+        ),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await loadReadableDataset(ctx, args.datasetId);
+
+    const rows = await ctx.db
+      .query("datasetRows")
+      .withIndex("by_dataset", (q) => q.eq("datasetId", args.datasetId))
+      .collect();
+
+    if (!args.filter || args.filter.value === undefined || args.filter.value === null || args.filter.value === "") return rows;
+
+    const { column, value, matchType = "contains" } = args.filter;
+    const cellStr = (v: unknown) => String(v ?? "").toLowerCase();
+    const searchVal = value.toLowerCase();
+
+    return rows.filter((row) => {
+      const cell = row.data[column];
+      if (cell == null) return false;
+      const s = cellStr(cell);
+      return matchType === "exact" ? s === searchVal : s.includes(searchVal);
+    });
+  },
+});
+
+/**
  * Row writes are SYSTEM-LEVEL operations performed by the agent runner,
  * never by end users directly. They are exposed as `internalMutation` so
  * they cannot be called from the browser — only from other Convex

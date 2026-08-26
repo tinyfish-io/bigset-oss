@@ -12,6 +12,7 @@ import { SideSheet, CellDetail } from "@/components/SideSheet";
 import type { DatasetColumn } from "@/components/table/types";
 import { useTheme } from "@/components/ThemeToggle";
 import { StatusBadge } from "@/components/dataset/StatusBadge";
+import { FilterPopover, ActiveFilter } from "@/components/dataset/FilterPopover";
 import { downloadCSV, downloadXLSX } from "@/lib/export";
 import { populate, update, stopPopulation } from "@/lib/backend";
 import { EVENTS, captureException, track } from "@/lib/analytics";
@@ -22,6 +23,7 @@ import {
 } from "@/lib/refresh-cadence";
 import type { ProfileUser } from "@/lib/profile-user";
 import { useAppAuth, useAppClerk, useAppConvexAuth, useAppUser } from "@/lib/app-auth";
+import { toast } from "@/components/Toaster";
 
 export default function DatasetPage() {
   const params = useParams();
@@ -37,6 +39,18 @@ export default function DatasetPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmPopulate, setConfirmPopulate] = useState(false);
   const [savingRefreshCadence, setSavingRefreshCadence] = useState(false);
+const updateDetails = useMutation(api.datasets.updateDetails);
+
+  const [filter, setFilter] = useState<{
+    column: string;
+    value: string;
+    matchType: "contains" | "exact";
+  } | null>(null);
+
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [savingMaxRowCount, setSavingMaxRowCount] = useState(false);
   const [maxRowCountSaveError, setMaxRowCountSaveError] = useState<string | null>(null);
   const [cellDetail, setCellDetail] = useState<{
@@ -54,6 +68,17 @@ export default function DatasetPage() {
     api.datasetRows.listByDataset,
     authLoading ? "skip" : { datasetId },
   );
+  const filteredRows = useQuery(
+    api.datasetRows.listByDatasetFiltered,
+    authLoading || filter === null
+      ? "skip"
+      : { datasetId, filter },
+  );
+
+  const displayRows = useMemo(
+    () => (filter === null ? (rows ?? []) : (filteredRows ?? [])),
+    [filter, rows, filteredRows],
+  );
   const updateRefreshSettings = useMutation(api.datasets.updateRefreshSettings);
   const updateMaxRowCount = useMutation(api.datasets.updateMaxRowCount);
   const usage = useQuery(
@@ -61,9 +86,14 @@ export default function DatasetPage() {
     isAuthenticated ? {} : "skip",
   );
 
-  const rowIds = useMemo(() => (rows ?? []).map((r) => r._id), [rows]);
+  const rowIds = useMemo(() => (displayRows ?? []).map((r) => r._id), [displayRows]);
   const selection = useSelection(rowIds);
   const selectedCount = selection.selected.size;
+
+  useEffect(() => {
+    selection.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, selection.clear]);
 
   const handlePopulate = useCallback(async () => {
     if (!dataset || populating || dataset.status === "building") return;
@@ -135,7 +165,7 @@ export default function DatasetPage() {
 
     const exportRows =
       selectedCount > 0
-        ? rows.filter((r) => selection.selected.has(r._id))
+        ? displayRows.filter((r) => selection.selected.has(r._id))
         : rows;
     if (exportRows.length === 0) return;
 
@@ -202,6 +232,51 @@ export default function DatasetPage() {
     } finally {
       setUpdating(false);
     }
+  }
+
+  function handleAddFilter(
+    column: string,
+    value: string,
+    matchType: "contains" | "exact",
+  ) {
+    setFilter({ column, value, matchType });
+  }
+
+  function handleClearFilter() {
+    setFilter(null);
+  }
+
+  function startEditingName() {
+    if (!dataset || userId !== dataset.ownerId) return;
+    setNameValue(dataset.name);
+    setEditingName(true);
+    setTimeout(() => nameInputRef.current?.select(), 0);
+  }
+
+  async function saveName() {
+    if (!dataset || savingName) return;
+    const trimmed = nameValue.trim();
+    if (!trimmed || trimmed === dataset.name) {
+      setEditingName(false);
+      return;
+    }
+    setSavingName(true);
+    try {
+      await updateDetails({
+        id: dataset._id,
+        name: trimmed,
+      });
+      toast.success("Dataset name updated");
+    } catch {
+      toast.error("Failed to update dataset name");
+    } finally {
+      setSavingName(false);
+      setEditingName(false);
+    }
+  }
+
+  function cancelNameEdit() {
+    setEditingName(false);
   }
 
   async function handleRefreshCadenceChange(refreshCadence: RefreshCadence) {
@@ -316,7 +391,7 @@ export default function DatasetPage() {
   // the "Dataset not found" UI.
 
   const exportDisabled = exporting !== null || rows.length === 0;
-  const isOwner = userId === dataset.ownerId;
+  const isOwner = userId != null && dataset?.ownerId != null && userId === dataset.ownerId;
   const displayDataset = {
     ...dataset,
     refreshCadence: dataset.refreshCadence ?? "daily",
@@ -360,9 +435,46 @@ export default function DatasetPage() {
           <svg width="8" height="20" viewBox="0 0 8 20" className="text-border shrink-0" aria-hidden="true">
             <line x1="7" y1="0" x2="1" y2="20" stroke="currentColor" strokeWidth="1.2" />
           </svg>
-          <h1 className="text-sm font-semibold tracking-tight truncate max-w-md">
-            {dataset.name}
-          </h1>
+          {editingName ? (
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={nameValue}
+              onChange={(e) => setNameValue(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  nameInputRef.current?.blur();
+                }
+                if (e.key === "Escape") cancelNameEdit();
+              }}
+              disabled={savingName}
+              className="text-sm font-semibold tracking-tight truncate max-w-md rounded border border-border bg-background px-2 py-0.5 outline-none focus:border-foreground/30 disabled:opacity-50 disabled:cursor-wait"
+            />
+          ) : isOwner ? (
+            <button
+              onClick={startEditingName}
+              className="flex items-center gap-1.5 group"
+              title="Edit dataset name"
+            >
+              <h1 className="text-sm font-semibold tracking-tight truncate max-w-md">
+                {dataset.name}
+              </h1>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                className="w-3 h-3 text-foreground/30 group-hover:text-foreground/60 transition-colors"
+              >
+                <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm1.414 1.06a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 1 .354 0Z" />
+              </svg>
+            </button>
+          ) : (
+            <h1 className="text-sm font-semibold tracking-tight truncate max-w-md">
+              {dataset.name}
+            </h1>
+          )}
           <StatusBadge status={dataset.status} />
         </div>
         <div className="flex items-center gap-1.5">
@@ -423,6 +535,23 @@ export default function DatasetPage() {
       </header>
 
       <div className="border-b border-border px-5 py-2.5 flex items-center gap-4 bg-surface/50 shrink-0">
+        <FilterPopover
+          columns={dataset.columns}
+          rows={rows ?? []}
+          onFilter={handleAddFilter}
+        />
+
+        {filter && (
+          <ActiveFilter
+            column={filter.column}
+            value={filter.value}
+            matchType={filter.matchType}
+            onClear={handleClearFilter}
+          />
+        )}
+
+        <div className="w-px h-4 bg-border shrink-0" />
+
         <div className="min-w-0 flex-1">
           <p className="text-xs text-muted truncate">
             {dataset.description}
@@ -442,7 +571,7 @@ export default function DatasetPage() {
               <span className="text-foreground/10">|</span>
             </>
           )}
-          <span>{rows.length} rows</span>
+          <span>{displayRows.length} rows</span>
           <span className="text-foreground/10">|</span>
           <span>{dataset.columns.length} columns</span>
         </div>
@@ -450,7 +579,7 @@ export default function DatasetPage() {
 
       <DatasetTable
         dataset={displayDataset}
-        rows={rows}
+        rows={displayRows}
         datasetId={datasetId}
         selection={selection}
         onCellExpand={handleCellExpand}

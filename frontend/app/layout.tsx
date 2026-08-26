@@ -5,6 +5,7 @@ import { AppAuthProvider } from "@/lib/app-auth";
 import { AnalyticsProvider } from "@/lib/analytics-provider";
 import { LocalSetupGate } from "./local-setup-gate";
 import { ThemeSync } from "@/components/ThemeToggle";
+import { ToasterProvider } from "@/components/ToasterProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -51,8 +52,9 @@ export default function RootLayout({
         <ThemeSync />
         <AppAuthProvider>
           <ConvexClientProvider>
-            <AnalyticsProvider>
+<AnalyticsProvider>
               <LocalSetupGate>{children}</LocalSetupGate>
+              <ToasterProvider />
             </AnalyticsProvider>
           </ConvexClientProvider>
         </AppAuthProvider>
