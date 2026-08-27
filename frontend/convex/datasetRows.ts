@@ -379,3 +379,143 @@ export const listInternal = internalQuery({
       .collect();
   },
 });
+
+/**
+ * Update specific columns in a row without touching other columns.
+ * Used by the enrichment workflow to fill empty cells while preserving
+ * existing data.
+ *
+ * Capability-scoped like `update`: caller MUST pass expectedDatasetId.
+ */
+export const updateCells = internalMutation({
+  args: {
+    id: v.id("datasetRows"),
+    expectedDatasetId: v.id("datasets"),
+    data: v.record(v.string(), v.any()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await assertRowInDataset(
+      ctx,
+      args.id,
+      args.expectedDatasetId,
+    );
+
+    const oldData = existing.data as Record<string, unknown>;
+    const newData = args.data;
+
+    // Merge: new data overwrites matching keys, other keys preserved
+    const mergedData: Record<string, unknown> = { ...oldData };
+    for (const [key, newVal] of Object.entries(newData)) {
+      mergedData[key] = newVal;
+      // Track history for cells that changed
+      const oldVal = oldData[key];
+      if (oldVal !== undefined && String(oldVal) !== String(newVal)) {
+        await ctx.db.insert("datasetHistory", {
+          datasetRowId: args.id,
+          columnName: key,
+          oldValue: String(oldVal ?? ""),
+          newValue: String(newVal ?? ""),
+          changedAt: Date.now(),
+        });
+      }
+    }
+
+    await ctx.db.patch(args.id, { data: mergedData });
+    return { success: true };
+  },
+});
+
+/**
+ * Query rows eligible for enrichment.
+ *
+ * A row qualifies if:
+ * - ALL sourceColumns have non-null values
+ * - At least one targetColumn has a null/missing value
+ *
+ * Used by the enrichment workflow to determine which rows need filling.
+ */
+export const getRowsForEnrich = internalQuery({
+  args: {
+    datasetId: v.id("datasets"),
+    sourceColumns: v.array(v.string()),
+    targetColumns: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("datasetRows")
+      .withIndex("by_dataset", (q) => q.eq("datasetId", args.datasetId))
+      .collect();
+
+    return rows.filter((row) => {
+      const data = row.data as Record<string, unknown>;
+
+      // Check all source columns have values
+      const hasAllSources = args.sourceColumns.every(
+        (col) => data[col] !== undefined && data[col] !== null && data[col] !== ""
+      );
+
+      // Check at least one target column is empty
+      const hasEmptyTargets = args.targetColumns.some(
+        (col) => data[col] === undefined || data[col] === null || data[col] === ""
+      );
+
+      return hasAllSources && hasEmptyTargets;
+    });
+  },
+});
+
+/**
+ * Bulk update multiple rows' cells in a single transaction.
+ * Used by the enrichment workflow after processing rows.
+ */
+export const bulkUpdateCells = internalMutation({
+  args: {
+    datasetId: v.id("datasets"),
+    updates: v.array(
+      v.object({
+        rowId: v.id("datasetRows"),
+        data: v.record(v.string(), v.any()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const dataset = await ctx.db.get(args.datasetId);
+    if (!dataset) throw new Error("Dataset not found");
+
+    const results: Array<{ rowId: string; success: boolean; error?: string }> = [];
+
+    for (const update of args.updates) {
+      try {
+        const existing = await assertRowInDataset(ctx, update.rowId, args.datasetId);
+
+        const oldData = existing.data as Record<string, unknown>;
+        const mergedData: Record<string, unknown> = { ...oldData };
+
+        for (const [key, newVal] of Object.entries(update.data)) {
+          mergedData[key] = newVal;
+          const oldVal = oldData[key];
+          if (oldVal !== undefined && String(oldVal) !== String(newVal)) {
+            await ctx.db.insert("datasetHistory", {
+              datasetRowId: update.rowId,
+              columnName: key,
+              oldValue: String(oldVal ?? ""),
+              newValue: String(newVal ?? ""),
+              changedAt: Date.now(),
+            });
+          }
+        }
+
+        await ctx.db.patch(update.rowId, { data: mergedData });
+        results.push({ rowId: update.rowId, success: true });
+      } catch (err) {
+        results.push({
+          rowId: update.rowId,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return results;
+  },
+});

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "none",
+    "outDir": "./src",
+    "rootDir": "./src",
+    "strict": false,
+    "noImplicitAny": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmitOnError": true,
+    "removeComments": false,
+    "newLine": "lf",
+    "types": ["google-apps-script"],
+    "lib": ["ES2020"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "sidebar"]
+}

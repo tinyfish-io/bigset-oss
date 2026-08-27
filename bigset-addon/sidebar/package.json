@@ -1,0 +1,26 @@
+{
+  "name": "bigset-addon-sidebar",
+  "private": true,
+  "version": "1.0.0",
+  "description": "BigSet add-on sidebar UI (Svelte)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^2.0.0",
+    "@tsconfig/svelte": "^5.0.0",
+    "svelte": "^3.54.0",
+    "svelte-check": "^2.10.0",
+    "tslib": "^2.4.1",
+    "typescript": "^6.0.0",
+    "vite": "^4.0.0",
+    "vite-plugin-singlefile": "^0.13.2"
+  },
+  "dependencies": {
+    "svelte-spa-router": "^3.3.0"
+  }
+}

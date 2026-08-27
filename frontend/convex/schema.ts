@@ -186,4 +186,53 @@ export default defineSchema({
     .index("by_dataset", ["datasetId"])
     .index("by_user", ["userId"])
     .index("by_workflow_run", ["workflowRunId"]),
+
+  // API keys for non-browser clients (Google Sheets add-on, CLI, etc.).
+  // We never store the plaintext key — only a SHA-256 hash. The `keyPrefix`
+  // (first 8 chars) is returned in listings so users can identify a key
+  // without leaking the secret. Created by the backend, listed/revoked
+  // through HTTP routes under requireAuth.
+  apiKeys: defineTable({
+    ownerId: v.string(),
+    name: v.string(),
+    keyHash: v.string(),
+    keyPrefix: v.string(),
+    lastUsedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_hash", ["keyHash"]),
+
+  /**
+   * Tracks individual data enrichment runs initiated by the Google Sheets addon.
+   * Each run fills empty columns in existing rows using AI-powered research.
+   */
+  sheetsEnrichmentRuns: defineTable({
+    datasetId: v.id("datasets"),
+    userId: v.string(),
+    sourceColumns: v.array(v.string()),
+    targetColumns: v.array(v.string()),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("stopped")
+    ),
+    rowsProcessed: v.number(),
+    rowsUpdated: v.number(),
+    rowsFound: v.number(),
+    errors: v.array(
+      v.object({
+        rowId: v.string(),
+        message: v.string(),
+      })
+    ),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    workflowRunId: v.optional(v.string()),
+  })
+    .index("by_dataset", ["datasetId"])
+    .index("by_user", ["userId"])
+    .index("by_workflow_run", ["workflowRunId"]),
 });
