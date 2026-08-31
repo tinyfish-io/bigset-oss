@@ -77,6 +77,7 @@ export interface LocalSetupStatus {
   services: {
     tinyfish: ServiceSetupStatus;
     openrouter: ServiceSetupStatus;
+    orcarouter: ServiceSetupStatus;
   };
 }
 
@@ -123,6 +124,72 @@ export async function saveOpenRouterApiKey(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ apiKey }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await errorMessage(res));
+  }
+
+  return res.json();
+}
+
+export async function saveOrcaRouterApiKey(
+  apiKey: string,
+): Promise<LocalSetupStatus> {
+  const res = await fetch(`${BACKEND_URL}/local-setup/orcarouter-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await errorMessage(res));
+  }
+
+  return res.json();
+}
+
+/** LLM gateway provider descriptor, mirrored from the backend registry. */
+export interface LlmProvider {
+  id: "openrouter" | "orcarouter";
+  name: string;
+  baseUrl: string;
+  keyEnvVar: string;
+  envValue: "openrouter" | "orcarouter";
+  label: string;
+}
+
+export const LLM_PROVIDERS: LlmProvider[] = [
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    keyEnvVar: "OPENROUTER_API_KEY",
+    envValue: "openrouter",
+    label: "OpenRouter",
+  },
+  {
+    id: "orcarouter",
+    name: "OrcaRouter",
+    baseUrl: "https://api.orcarouter.ai/v1",
+    keyEnvVar: "ORCAROUTER_API_KEY",
+    envValue: "orcarouter",
+    label: "OrcaRouter",
+  },
+];
+
+/**
+ * Save an API key for an LLM gateway provider (OpenRouter or OrcaRouter)
+ * through the generic provider endpoint.
+ */
+export async function saveLlmProviderApiKey(
+  providerId: "openrouter" | "orcarouter",
+  apiKey: string,
+): Promise<LocalSetupStatus> {
+  const res = await fetch(`${BACKEND_URL}/local-setup/llm-provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: providerId, apiKey }),
   });
 
   if (!res.ok) {

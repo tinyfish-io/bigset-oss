@@ -4,6 +4,7 @@ import { buildPopulateTools } from "../tools/dataset-tools.js";
 import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
 import type { PopulateColumn } from "../../pipeline/populate.js";
+import { getLlmBaseUrl } from "../../local-credentials.js";
 
 function buildRefreshInstructions(columns: PopulateColumn[]): string {
   const columnNames = columns.map((c) => c.name);
@@ -47,16 +48,16 @@ WORKFLOW:
 `;
 }
 
-export function buildRefreshAgent(
+export async function buildRefreshAgent(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
   openRouterApiKey: string,
-): Agent {
+): Promise<Agent> {
   const modelSlug = authContext.modelConfig!.investigateSubagent;
   const openrouter = createOpenRouter({
     apiKey: openRouterApiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL,
+    baseURL: await getLlmBaseUrl(),
   });
   const { update_row } = buildPopulateTools(
     authorizedDatasetId,

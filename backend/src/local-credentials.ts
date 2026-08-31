@@ -9,6 +9,14 @@ import type {
   ConnectionMethod,
   LocalCredentialService,
 } from "./local-credential-types.js";
+import {
+  OPENROUTER_PROVIDER,
+  ORCAROUTER_PROVIDER,
+  type LlmProvider,
+  findLlmProvider,
+  isLlmProviderId,
+  providerBaseUrl,
+} from "./config/llm-provider.js";
 
 export const LOCAL_USER_ID = "local_user_default";
 
@@ -30,12 +38,22 @@ function isPlaceholder(value: string, service: LocalCredentialService): boolean 
   if (!value.trim()) return true;
   if (value.includes("...")) return true;
   if (service === "openrouter" && value === "sk-or-...") return true;
+  if (service === "orcarouter" && value === "sk-orca-...") return true;
   return false;
 }
 
 function envCredential(service: LocalCredentialService): string | undefined {
-  const value =
-    service === "tinyfish" ? process.env.TINYFISH_API_KEY : env.OPENROUTER_API_KEY;
+  if (service === "tinyfish") {
+    const value = process.env.TINYFISH_API_KEY;
+    if (!value || isPlaceholder(value, service)) return undefined;
+    return value;
+  }
+  if (service === "orcarouter") {
+    const value = process.env.ORCAROUTER_API_KEY;
+    if (!value || isPlaceholder(value, service)) return undefined;
+    return value;
+  }
+  const value = env.OPENROUTER_API_KEY;
   if (!value || isPlaceholder(value, service)) return undefined;
   return value;
 }
@@ -49,6 +67,18 @@ async function localCredential(service: LocalCredentialService): Promise<{
   if (!env.IS_LOCAL_MODE) return null;
   const keychain = await getKeychainCredential(service);
   if (!keychain?.apiKey) return null;
+
+  if (service === "orcarouter") {
+    // OrcaRouter credentials are keychain-only. The Convex localCredentials
+    // table's service union predates the second LLM gateway and is kept
+    // compatible, so connection metadata is defaulted here instead.
+    return {
+      apiKey: keychain.apiKey,
+      connectionMethod: "api_key",
+      verifiedAt: null,
+      keychainAccount: keychain.keychainAccount,
+    };
+  }
 
   const row = await convex.query(internal.localCredentials.getInternal, {
     service,
@@ -86,16 +116,59 @@ export async function resolveCredential(
   return null;
 }
 
-export async function getOpenRouterApiKey(): Promise<string | undefined> {
-  return (await resolveCredential("openrouter"))?.apiKey;
+/**
+ * Resolve the LLM gateway provider in use.
+ *
+ * An explicit `LLM_PROVIDER` env value wins. Otherwise the configured
+ * credential decides: an OrcaRouter key means the user's gateway is
+ * OrcaRouter; OpenRouter is the fallback (and the historical default).
+ */
+export async function resolveActiveLlmProvider(): Promise<LlmProvider> {
+  if (isLlmProviderId(process.env.LLM_PROVIDER)) {
+    const provider = findLlmProvider(process.env.LLM_PROVIDER);
+    if (provider) return provider;
+  }
+  const orca = await resolveCredential("orcarouter");
+  if (orca) return ORCAROUTER_PROVIDER;
+  return OPENROUTER_PROVIDER;
 }
 
-export async function requireOpenRouterApiKey(): Promise<string> {
-  const apiKey = await getOpenRouterApiKey();
+/** Base URL for the active LLM gateway (OpenRouter or OrcaRouter). */
+export async function getLlmBaseUrl(): Promise<string> {
+  const provider = await resolveActiveLlmProvider();
+  return providerBaseUrl(provider);
+}
+
+/** API key for the active LLM gateway, if configured. */
+export async function getLlmApiKey(): Promise<string | undefined> {
+  const provider = await resolveActiveLlmProvider();
+  return (await resolveCredential(provider.id))?.apiKey;
+}
+
+export async function requireLlmApiKey(): Promise<string> {
+  const apiKey = await getLlmApiKey();
   if (!apiKey) {
-    throw new Error("OpenRouter is not configured. Complete local setup first.");
+    throw new Error(
+      "No LLM gateway is configured. Add an OpenRouter or OrcaRouter key during setup.",
+    );
   }
   return apiKey;
+}
+
+/**
+ * @deprecated Use `getLlmApiKey` — the resolved key may now belong to
+ * OrcaRouter. Kept so existing callers keep working unchanged.
+ */
+export async function getOpenRouterApiKey(): Promise<string | undefined> {
+  return await getLlmApiKey();
+}
+
+/**
+ * @deprecated Use `requireLlmApiKey` — the resolved key may now belong to
+ * OrcaRouter. Kept so existing callers keep working unchanged.
+ */
+export async function requireOpenRouterApiKey(): Promise<string> {
+  return await requireLlmApiKey();
 }
 
 export async function getTinyFishApiKey(): Promise<string | undefined> {
@@ -141,6 +214,7 @@ export async function getLocalSetupStatus(): Promise<LocalSetupStatus> {
   if (!env.IS_LOCAL_MODE) {
     const tinyfish = envCredential("tinyfish");
     const openrouter = envCredential("openrouter");
+    const orcarouter = envCredential("orcarouter");
     return {
       mode: "production",
       required: false,
@@ -158,12 +232,19 @@ export async function getLocalSetupStatus(): Promise<LocalSetupStatus> {
           connectionMethod: openrouter ? "api_key" : null,
           verifiedAt: null,
         },
+        orcarouter: {
+          configured: !!orcarouter,
+          source: orcarouter ? "env" : null,
+          connectionMethod: orcarouter ? "api_key" : null,
+          verifiedAt: null,
+        },
       },
     };
   }
 
   const tinyfishLocal = await localCredentialForStatus("tinyfish");
   const openrouterLocal = await localCredentialForStatus("openrouter");
+  const orcarouterLocal = await localCredentialForStatus("orcarouter");
 
   const tinyfish: ServiceSetupStatus = tinyfishLocal
     ? {
@@ -193,11 +274,25 @@ export async function getLocalSetupStatus(): Promise<LocalSetupStatus> {
         verifiedAt: null,
       };
 
+  const orcarouter: ServiceSetupStatus = orcarouterLocal
+    ? {
+        configured: true,
+        source: "local",
+        connectionMethod: orcarouterLocal.connectionMethod,
+        verifiedAt: orcarouterLocal.verifiedAt,
+      }
+    : {
+        configured: false,
+        source: null,
+        connectionMethod: null,
+        verifiedAt: null,
+      };
+
   return {
     mode: "local",
     required: true,
-    complete: tinyfish.configured && openrouter.configured,
-    services: { tinyfish, openrouter },
+    complete: tinyfish.configured && (openrouter.configured || orcarouter.configured),
+    services: { tinyfish, openrouter, orcarouter },
   };
 }
 
@@ -210,6 +305,11 @@ export async function saveLocalCredential(
     throw new Error("Local credential storage is disabled when PROD=1.");
   }
   const { keychainAccount } = await setKeychainCredential(service, apiKey);
+  if (service === "orcarouter") {
+    // Keychain-only for OrcaRouter: the Convex localCredentials table's
+    // service union is OpenRouter-only, so there is no row to upsert.
+    return;
+  }
   await convex.mutation(internal.localCredentials.upsertInternal, {
     service,
     keychainAccount,
@@ -247,29 +347,45 @@ export async function verifyTinyFishApiKey(apiKey: string): Promise<void> {
   );
 }
 
-export async function verifyOpenRouterApiKey(apiKey: string): Promise<void> {
-  const baseUrl = (
-    process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"
-  ).replace(/\/+$/, "");
+/**
+ * Verify an API key against an LLM gateway provider.
+ *
+ * The provider registry declares an authenticated endpoint for key checks
+ * (OpenRouter: /key; OrcaRouter: /models) — both return 401/403 for an
+ * invalid key.
+ */
+export async function verifyLlmProviderApiKey(
+  provider: LlmProvider,
+  apiKey: string,
+): Promise<void> {
+  const baseUrl = providerBaseUrl(provider);
 
   await withFetchTimeout(
     async (signal) => {
-      const response = await fetch(`${baseUrl}/key`, {
+      const response = await fetch(`${baseUrl}${provider.keyVerificationPath}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal,
       });
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
-          throw new Error("OpenRouter rejected that API key.");
+          throw new Error(`${provider.name} rejected that API key.`);
         }
         throw new Error(
-          `OpenRouter verification failed with HTTP ${response.status}.`,
+          `${provider.name} verification failed with HTTP ${response.status}.`,
         );
       }
     },
-    `OpenRouter verification timed out after ${FETCH_TIMEOUT_MS / 1000} seconds.`,
+    `${provider.name} verification timed out after ${FETCH_TIMEOUT_MS / 1000} seconds.`,
   );
+}
+
+export async function verifyOpenRouterApiKey(apiKey: string): Promise<void> {
+  await verifyLlmProviderApiKey(OPENROUTER_PROVIDER, apiKey);
+}
+
+export async function verifyOrcaRouterApiKey(apiKey: string): Promise<void> {
+  await verifyLlmProviderApiKey(ORCAROUTER_PROVIDER, apiKey);
 }
 
 export async function exchangeOpenRouterOAuthCode({

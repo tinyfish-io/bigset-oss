@@ -4,6 +4,7 @@ import { buildPopulateTools } from "../tools/dataset-tools.js";
 import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
 import type { PopulateColumn } from "../../pipeline/populate.js";
+import { getLlmBaseUrl } from "../../local-credentials.js";
 
 function buildInvestigateInstructions(columns: PopulateColumn[]): string {
   const columnNames = columns.map((c) => c.name);
@@ -51,16 +52,16 @@ WORKFLOW:
  * closure-based security model (buildPopulateTools). A fresh instance is
  * constructed per investigate_row tool call; do not cache or share.
  */
-export function buildInvestigateAgent(
+export async function buildInvestigateAgent(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
   openRouterApiKey: string,
-): Agent {
+): Promise<Agent> {
   const modelSlug = authContext.modelConfig!.investigateSubagent;
   const openrouter = createOpenRouter({
     apiKey: openRouterApiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL,
+    baseURL: await getLlmBaseUrl(),
   });
 
   const { insert_row } = buildPopulateTools(
