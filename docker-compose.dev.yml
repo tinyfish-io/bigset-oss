@@ -28,7 +28,7 @@ services:
       - ./backend/src:/app/src
       - ./scripts:/scripts:ro
     environment:
-      CLIENT_ORIGIN: http://localhost:3500
+      CLIENT_ORIGIN: http://localhost:3500,http://localhost:3502
       CONVEX_URL: http://convex:3210
       PORT: 3501
       PROD: ${PROD:-}
@@ -109,6 +109,7 @@ services:
       - ./scripts:/scripts:ro
     environment:
       NEXT_PUBLIC_CONVEX_URL: http://localhost:3210
+      CONVEX_URL: http://convex:3210
       NEXT_PUBLIC_PROD: ${PROD:-}
       PROD: ${PROD:-}
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
@@ -122,6 +123,7 @@ services:
       NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: /dashboard
       NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: /dashboard
       NEXT_PUBLIC_BACKEND_URL: http://localhost:3501
+      BACKEND_URL: http://backend:3501
       # PostHog — analytics no-ops if unset
       NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
       NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}

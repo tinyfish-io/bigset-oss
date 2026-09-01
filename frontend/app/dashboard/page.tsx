@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import type { DatasetMeta } from "@/lib/fetch-dataset-meta";
 import {
   DatasetCard,
   type DatasetCardData,
@@ -22,6 +24,7 @@ export default function DashboardPage() {
   const { user } = useAppUser();
   const { signOut } = useAppClerk();
   const [search, setSearch] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
 
   const mine = useQuery(
     api.datasets.listMine,
@@ -147,6 +150,14 @@ export default function DashboardPage() {
               className="w-full rounded-lg border border-border bg-surface py-2.5 pl-10 pr-3 text-sm outline-none placeholder:text-muted/60 focus:border-foreground/30 transition-[border-color] duration-150"
             />
           </div>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="rounded-lg border border-border bg-surface px-5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-foreground/[0.05]"
+          >
+            Import
+          </button>
+
           {atLimit ? (
             <div className="relative group">
               <span
@@ -215,6 +226,193 @@ export default function DashboardPage() {
           </>
         )}
       </main>
+
+      {importOpen && (
+        <ImportModal onClose={() => setImportOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function ImportModal({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
+  const [url, setUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [crossPreview, setCrossPreview] = useState<DatasetMeta | null | "loading">(null);
+  const importDataset = useMutation(api.datasets.importDataset);
+  const importDatasetFromSchema = useMutation(api.datasets.importDatasetFromSchema);
+
+  function parseShareUrl(input: string): { id: string; origin: string } | null {
+    const trimmed = input.trim();
+    try {
+      const parsed = new URL(trimmed);
+      const match = parsed.pathname.match(/\/(?:dataset|share)\/([^/?#]+)/);
+      const id = match?.[1] ?? null;
+      if (id && /^[a-zA-Z0-9]{20,}$/.test(id)) return { id, origin: parsed.origin };
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  const parsed = parseShareUrl(url);
+  const extractedId = parsed?.id ?? null;
+  const sourceOrigin = parsed?.origin ?? null;
+  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const isCrossInstance = !!sourceOrigin && sourceOrigin !== currentOrigin;
+
+  const sameInstancePreview = useQuery(
+    api.datasets.get,
+    !isCrossInstance && extractedId ? { id: extractedId as Id<"datasets"> } : "skip",
+  );
+
+  useEffect(() => {
+    if (!isCrossInstance || !extractedId || !sourceOrigin) {
+      setCrossPreview(null);
+      return;
+    }
+    setCrossPreview("loading");
+    const controller = new AbortController();
+
+    let fallback: DatasetMeta | null = null;
+    try {
+      const schemaParam = new URL(url.trim()).searchParams.get("schema");
+      if (schemaParam) {
+        const bytes = Uint8Array.from(atob(schemaParam), c => c.charCodeAt(0));
+        fallback = JSON.parse(new TextDecoder().decode(bytes)) as DatasetMeta;
+      }
+    } catch {}
+
+    fetch(`${sourceOrigin}/api/share/${extractedId}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: DatasetMeta | null) => setCrossPreview(data ?? fallback))
+      .catch(() => setCrossPreview(fallback));
+    return () => controller.abort();
+  }, [isCrossInstance, extractedId, sourceOrigin, url]);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const preview: DatasetMeta | null | undefined = isCrossInstance
+    ? (crossPreview === "loading" ? undefined : crossPreview)
+    : (sameInstancePreview as DatasetMeta | null | undefined);
+
+  const previewLoading = isCrossInstance
+    ? crossPreview === "loading"
+    : extractedId !== null && sameInstancePreview === undefined;
+
+  const isValidUrl = extractedId !== null;
+  const isPublic = isCrossInstance
+    ? preview !== null && preview !== undefined
+    : preview !== null && preview !== undefined && (preview as { visibility?: string }).visibility === "public";
+
+  async function handleImport() {
+    if (!extractedId || importing || !preview) return;
+    setImporting(true);
+    setError(null);
+    try {
+      let newId: Id<"datasets">;
+      if (isCrossInstance) {
+        newId = await importDatasetFromSchema({
+          name: preview.name,
+          description: preview.description,
+          columns: preview.columns,
+        });
+      } else {
+        newId = await importDataset({ sourceId: extractedId as Id<"datasets"> });
+      }
+      onClose();
+      router.push(`/dataset/${newId}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to import dataset.";
+      setError(
+        msg.toLowerCase().includes("quota")
+          ? "You've reached your free-tier quota. Upgrade to import more datasets."
+          : msg,
+      );
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      role="presentation"
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="import-modal-title" className="w-full max-w-sm rounded-xl border border-border bg-surface shadow-2xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p id="import-modal-title" className="text-sm font-semibold text-foreground">Import Dataset</p>
+          <button onClick={onClose} className="text-muted hover:text-foreground transition-colors" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <p className="text-xs text-muted mb-3">Paste a BigSet dataset link to add it to your account.</p>
+
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setError(null); }}
+          placeholder="https://..."
+          className="w-full rounded-lg border border-border bg-foreground/[0.03] px-3 py-2 text-xs text-foreground placeholder:text-muted/50 outline-none focus:border-foreground/30 transition-[border-color]"
+        />
+
+        {isValidUrl && previewLoading && (
+          <p className="mt-2 text-[11px] text-muted">Loading preview...</p>
+        )}
+
+        {isValidUrl && !previewLoading && preview === null && (
+          <p className="mt-2 text-[11px] text-red-500">Dataset not found or not accessible.</p>
+        )}
+
+        {preview && (
+          <div className="mt-3 rounded-lg border border-border bg-foreground/[0.02] p-3">
+            <p className="text-xs font-semibold text-foreground truncate">{preview.name}</p>
+            {preview.description && (
+              <p className="mt-0.5 text-[11px] text-muted line-clamp-2">{preview.description}</p>
+            )}
+            <p className="mt-1.5 text-[11px] text-muted">
+              {preview.columns.length} column{preview.columns.length !== 1 ? "s" : ""}
+              {preview.rowCount ? ` · ${preview.rowCount} rows` : ""}
+            </p>
+            {!isPublic && (
+              <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">This dataset is private and cannot be imported.</p>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <p className="mt-2 text-[11px] text-red-500">{error}</p>
+        )}
+
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-lg bg-foreground/[0.06] py-1.5 text-xs font-medium text-foreground hover:bg-foreground/[0.1] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={!preview || !isPublic || importing}
+            className="flex-1 rounded-lg bg-accent py-1.5 text-xs font-semibold text-accent-text hover:opacity-90 transition-opacity disabled:opacity-40"
+          >
+            {importing ? "Adding..." : "Add to my BigSet"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
