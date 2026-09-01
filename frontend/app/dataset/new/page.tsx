@@ -183,12 +183,21 @@ export default function NewDatasetPage() {
       );
       return;
     }
+    const trimmedDatasetName = datasetName.trim();
+    if (!trimmedDatasetName) {
+      setError("Dataset name is required.");
+      return;
+    }
+    if (columns.length === 0) {
+      setError("Add at least one column before creating the dataset.");
+      return;
+    }
     setIsCreating(true);
     setError(null);
     let datasetId: string;
     try {
       datasetId = await createDataset({
-        name: datasetName,
+        name: trimmedDatasetName,
         description: prompt,
         refreshCadence,
         maxRowCount,
