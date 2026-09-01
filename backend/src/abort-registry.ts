@@ -3,8 +3,8 @@
  *
  * Allows the /stop HTTP route to cancel an in-flight populate or update
  * workflow. The AbortSignal is retrieved inside Mastra workflow steps
- * (which receive no signal parameter from the framework) via `getSignal()`
- * and passed explicitly to each `agent.generate()` call.
+ * and dataset-scoped web tools via `getSignal()`, then passed explicitly
+ * to each `agent.generate()` and TinyFish request.
  *
  * Keyed by datasetId because:
  *   - The /stop route knows the datasetId (from the request body).
