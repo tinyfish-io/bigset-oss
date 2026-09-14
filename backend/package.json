@@ -18,7 +18,7 @@
     "ai": "^6.0.0",
     "convex": "^1.39.1",
     "dotenv": "^16.4.0",
-    "fastify": "^5.0.0",
+    "fastify": "^5.12.4",
     "fastify-plugin": "^5.1.0",
     "posthog-node": "^5.35.1",
     "resend": "^6.12.3",
@@ -31,10 +31,27 @@
     "typescript": "^5.0.0"
   },
   "overrides": {
-    "ws": "^8.21.0",
-    "hono": "^4.12.25",
-    "js-cookie": "^3.0.7",
+    "@ai-sdk/gateway": {
+      "@ai-sdk/provider-utils": "^4.0.40"
+    },
     "@babel/core": "^7.29.6",
-    "esbuild": "^0.28.1"
+    "@hono/node-server": "^1.19.17",
+    "ai": {
+      "@ai-sdk/provider-utils": "^4.0.40"
+    },
+    "baseline-browser-mapping": "^2.11.23",
+    "brace-expansion": "^2.1.4",
+    "browserslist": "^4.28.9",
+    "esbuild": "^0.28.1",
+    "fast-uri": "^3.1.7",
+    "find-my-way": "^9.9.0",
+    "hono": "^4.13.7",
+    "js-cookie": "^3.0.7",
+    "js-yaml": "^3.15.2",
+    "serve-handler": {
+      "brace-expansion": "^1.1.18"
+    },
+    "shell-quote": "^1.10.0",
+    "ws": "^8.21.0"
   }
 }
