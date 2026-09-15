@@ -9,6 +9,7 @@ Frontend on :3500, backend on :3501, Mastra Studio on :4111, Convex dashboard on
 1. Copy `.env.example` to `.env` and fill in your keys:
    - `TINYFISH_API_KEY` — from https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2
    - `OPENROUTER_API_KEY` — from https://openrouter.ai/settings/keys
+   - `ORCAROUTER_API_KEY` — optional alternative LLM gateway from https://www.orcarouter.ai (set `LLM_PROVIDER=orcarouter` to force it)
    - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — from Clerk API Keys
    - `CLERK_SECRET_KEY` — from Clerk API Keys
    - `CLERK_JWT_ISSUER_DOMAIN` — your Frontend API URL (e.g. `https://your-app.clerk.accounts.dev`)

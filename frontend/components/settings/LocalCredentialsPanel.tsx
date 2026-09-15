@@ -11,13 +11,14 @@ import {
 import {
   getLocalSetupStatus,
   saveOpenRouterApiKey,
+  saveOrcaRouterApiKey,
   saveTinyFishApiKey,
   type LocalSetupStatus,
   type ServiceSetupStatus,
 } from "@/lib/backend";
 import { isLocalMode } from "@/lib/app-mode";
 
-type ServiceName = "tinyfish" | "openrouter";
+type ServiceName = "tinyfish" | "openrouter" | "orcarouter";
 
 const SERVICE_COPY = {
   tinyfish: {
@@ -41,6 +42,17 @@ const SERVICE_COPY = {
     helperHref: "https://openrouter.ai/settings/keys",
     helperLabel: "Need an OpenRouter key?",
     helperDescription: "Open the OpenRouter keys page",
+  },
+  orcarouter: {
+    modalTitle: "OrcaRouter API key",
+    description:
+      "BigSet uses OrcaRouter's API to power BigSet with AI model access.",
+    inputPlaceholder: "sk-orca-...",
+    modalDescription:
+      "BigSet verifies the key and stores it in your OS keychain.",
+    helperHref: "https://www.orcarouter.ai",
+    helperLabel: "Learn more about OrcaRouter",
+    helperDescription: "Open orcarouter.ai",
   },
 } satisfies Record<
   ServiceName,
@@ -96,8 +108,8 @@ export function LocalCredentialsPanel() {
           Service credentials
         </h2>
         <p className="mt-1 text-sm leading-6 text-muted">
-          Add TinyFish and OpenRouter access for live datasets. Local keys stay
-          in your OS keychain.
+          Add TinyFish and OpenRouter or OrcaRouter access for live datasets.
+          Local keys stay in your OS keychain.
         </p>
       </div>
 
@@ -118,6 +130,12 @@ export function LocalCredentialsPanel() {
             status={status?.services.openrouter}
             loading={loading}
             onApiKey={() => setModal("openrouter")}
+          />
+          <CredentialCard
+            service="orcarouter"
+            status={status?.services.orcarouter}
+            loading={loading}
+            onApiKey={() => setModal("orcarouter")}
           />
         </div>
       )}
@@ -208,6 +226,10 @@ function ServiceBrand({ service }: { service: ServiceName }) {
     );
   }
 
+  if (service === "orcarouter") {
+    return <OrcaRouterBrand />;
+  }
+
   return <OpenRouterBrand />;
 }
 
@@ -235,6 +257,25 @@ function OpenRouterBrand() {
         <path d="M508 376.445L354.25 287.678L354.25 465.213L508 376.445Z" />
       </svg>
       <span className="text-xl font-semibold tracking-tight">OpenRouter</span>
+    </div>
+  );
+}
+
+function OrcaRouterBrand() {
+  return (
+    <div className="flex items-center gap-2 text-black dark:invert">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 4 4 4 4 0 0 1-4 4 4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1-4-4 4 4 0 0 1 4-4 4 4 0 0 1 4-4Z" />
+        <circle cx="12" cy="12" r="2" fill="var(--color-surface, #fff)" />
+      </svg>
+      <span className="text-xl font-semibold tracking-tight">OrcaRouter</span>
     </div>
   );
 }
@@ -300,7 +341,9 @@ function ApiKeyModal({
     try {
       const next = isTinyFish
         ? await saveTinyFishApiKey(apiKey.trim())
-        : await saveOpenRouterApiKey(apiKey.trim());
+        : service === "orcarouter"
+          ? await saveOrcaRouterApiKey(apiKey.trim())
+          : await saveOpenRouterApiKey(apiKey.trim());
       onSaved(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
