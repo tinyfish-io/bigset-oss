@@ -1,4 +1,8 @@
-export const LOCAL_CREDENTIAL_SERVICES = ["tinyfish", "openrouter"] as const;
+export const LOCAL_CREDENTIAL_SERVICES = [
+  "tinyfish",
+  "openrouter",
+  "orcarouter",
+] as const;
 
 export type LocalCredentialService = (typeof LOCAL_CREDENTIAL_SERVICES)[number];
 export type ConnectionMethod = "api_key" | "oauth";
