@@ -1,0 +1,31 @@
+{
+  "name": "bigset-addon",
+  "version": "1.0.0",
+  "description": "BigSet Google Sheet add-on — build and enrich datasets from natural language",
+  "main": "src/index.ts",
+  "scripts": {
+    "clasp:create": "clasp create --title \"BigSet Addon\" --rootDir ./src",
+    "clasp:login": "clasp login --no-localhost",
+    "clasp:open": "clasp open",
+    "build": "shx rm -fr ./sidebar/public/build && npm run build:sidebar && npm run build:tsc && npm run build:post",
+    "start": "cd ./sidebar && npm start",
+    "build:sidebar": "cd ./sidebar && npm run build",
+    "build:tsc": "tsc -p tsconfig.json",
+    "build:post": "shx cp ./sidebar/dist/* src/",
+    "deploy": "run-s build && clasp push",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigset/bigset"
+  },
+  "author": "BigSet",
+  "license": "MIT",
+  "devDependencies": {
+    "@google/clasp": "^2.3.0",
+    "@types/google-apps-script": "^1.0.11",
+    "npm-run-all": "^4.1.5",
+    "shx": "^0.3.4",
+    "typescript": "^4.9.5"
+  }
+}

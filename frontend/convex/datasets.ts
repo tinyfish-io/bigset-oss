@@ -450,6 +450,17 @@ export const listByOwnerInternal = internalQuery({
   },
 });
 
+export const listPublicInternal = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db
+      .query("datasets")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "public"))
+      .order("desc")
+      .collect();
+  },
+});
+
 export const getOwnedInternal = internalQuery({
   args: {
     id: v.id("datasets"),
