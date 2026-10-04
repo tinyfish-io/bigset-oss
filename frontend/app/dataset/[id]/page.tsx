@@ -65,6 +65,16 @@ export default function DatasetPage() {
   const selection = useSelection(rowIds);
   const selectedCount = selection.selected.size;
 
+  const maxRows = dataset?.maxRowCount ?? 100;
+  const generatedRows = rows?.length ?? 0;
+  const remainingRows = Math.max(maxRows - generatedRows, 0);
+  const isBuilding = dataset?.status === "building";
+
+  const estimatedMinutesRemaining =
+    isBuilding && remainingRows > 0
+      ? Math.max(1, Math.ceil(remainingRows / 20))
+      : null;
+
   const handlePopulate = useCallback(async () => {
     if (!dataset || populating || dataset.status === "building") return;
     // A new run is starting — discard any lingering stop-latch from the previous run.
@@ -442,7 +452,19 @@ export default function DatasetPage() {
               <span className="text-foreground/10">|</span>
             </>
           )}
-          <span>{rows.length} rows</span>
+          <span>
+            {generatedRows} / {maxRows} rows
+          </span>
+
+          {generatedRows < maxRows && (
+            <>
+              <span className="text-foreground/10">|</span>
+              <span>
+                {remainingRows} remaining
+              </span>
+            </>
+          )}
+
           <span className="text-foreground/10">|</span>
           <span>{dataset.columns.length} columns</span>
         </div>
