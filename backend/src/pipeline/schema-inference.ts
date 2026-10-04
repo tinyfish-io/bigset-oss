@@ -18,6 +18,7 @@ Your job is to:
    - \`hybrid\` — unclear; the pipeline will try search_fetch first and fall back to browser.
 5. Set \`source_hint\` to a specific URL whenever possible (e.g. \`https://www.ycombinator.com/companies?industry=Fintech\`). Avoid vague descriptions.
 6. Write a \`retrieval_hint\` for each column describing where/how the value can be found later. Downstream agents will use this to fill the column for each row.
+7. If the user's prompt mentions a specific number of items (e.g. "top 10", "list of 50", "25 companies"), set \`suggested_row_count\` to that number. Otherwise omit it.
 
 Rules:
 

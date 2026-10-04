@@ -5,6 +5,7 @@ export interface InferredSchema {
   primary_key: string;
   retrieval_strategy: "search_fetch" | "browser" | "hybrid";
   source_hint: string;
+  suggested_row_count?: number;
 }
 
 export interface InferredColumn {

@@ -38,6 +38,7 @@ export const datasetSchemaSchema = z
     primary_key: z.union([z.string(), z.array(z.string())]),
     retrieval_strategy: retrievalStrategySchema,
     source_hint: z.string().min(1),
+    suggested_row_count: z.number().optional(),
   })
   .superRefine((data, ctx) => {
     const names = data.columns.map((c) => c.name);
