@@ -5,6 +5,7 @@ import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
 import type { PopulateColumn } from "../../pipeline/populate.js";
 import type { RunMetrics } from "../run-metrics.js";
+import { getLlmBaseUrl } from "../../local-credentials.js";
 
 function buildInstructions(maxRowCount: number): string {
   return `You are an expert dataset builder. You conduct research using your web tools.
@@ -36,18 +37,18 @@ Duplicates are rejected automatically based on primary key columns. If a subagen
  *
  * A fresh orchestrator is constructed per workflow run; do not cache.
  */
-export function buildPopulateAgent(
+export async function buildPopulateAgent(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
   openRouterApiKey: string,
   maxRowCount: number,
   metrics?: RunMetrics,
-): Agent {
+): Promise<Agent> {
   const modelSlug = authContext.modelConfig!.populateOrchestrator;
   const openrouter = createOpenRouter({
     apiKey: openRouterApiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL,
+    baseURL: await getLlmBaseUrl(),
   });
 
   return new Agent({

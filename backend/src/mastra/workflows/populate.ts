@@ -5,7 +5,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { datasetContextSchema, populateColumnSchema } from "../../pipeline/populate.js";
 import { convex, internal } from "../../convex.js";
 import { DEFAULT_MODEL_IDS } from "../../config/models.js";
-import { requireOpenRouterApiKey } from "../../local-credentials.js";
+import { getLlmBaseUrl, requireLlmApiKey } from "../../local-credentials.js";
 import { buildPopulateAgent } from "../agents/populate.js";
 import { RunMetrics } from "../run-metrics.js";
 import { saveRunMetrics } from "../save-run-metrics.js";
@@ -109,10 +109,10 @@ Respond with EXACTLY one word: scraper or search`;
 
     let classification: "scraper" | "search" = "search";
     try {
-      const apiKey = await requireOpenRouterApiKey();
+      const apiKey = await requireLlmApiKey();
       const openrouter = createOpenRouter({
         apiKey,
-        baseURL: process.env.OPENROUTER_BASE_URL,
+        baseURL: await getLlmBaseUrl(),
       });
       const modelSlug =
         inputData.authContext?.modelConfig?.schemaInference ?? DEFAULT_MODEL_IDS.SCHEMA_INFERENCE;
@@ -247,11 +247,11 @@ const agentStep = createStep({
     let errorMsg: string | undefined;
 
     try {
-      const agent = buildPopulateAgent(
+      const agent = await buildPopulateAgent(
         inputData.authorizedDatasetId,
         inputData.authContext,
         inputData.columns,
-        await requireOpenRouterApiKey(),
+        await requireLlmApiKey(),
         inputData.maxRowCount,
         metrics,
       );

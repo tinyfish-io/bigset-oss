@@ -1,6 +1,9 @@
 # BigSet Backend
 
 Fastify server that handles auth, database, and talks to TinyFish APIs.
+LLM calls are routed through an OpenAI-compatible gateway — OpenRouter by
+default, or [OrcaRouter](https://www.orcarouter.ai) when an OrcaRouter key
+is configured (or `LLM_PROVIDER=orcarouter` is set in the root `.env`).
 
 ## Running
 
