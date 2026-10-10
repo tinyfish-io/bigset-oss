@@ -65,11 +65,15 @@ export function CellValue({
   }
 
   if (type === "number") {
-    return <span className="tabular-nums">{str}</span>;
+    return (
+	 <span className="tabular-nums" title={str} >
+		{str}
+	</span>
+    );
   }
 
   return (
-    <span title={str.length > MAX_CHARS ? str : undefined}>
+    <span title={str}>
       {truncate(str)}
     </span>
   );
