@@ -116,8 +116,8 @@ export async function requireAuth(
   const requestState = await req.server.clerk.authenticateRequest(
     clerkRequest,
     {
-      // Anyone consuming our backend is our own frontend; lock to its origin.
-      authorizedParties: [env.CLIENT_ORIGIN],
+      // Anyone consuming our backend is our own frontend; lock to allowed origins.
+      authorizedParties: env.CLIENT_ORIGINS,
     },
   );
 

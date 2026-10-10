@@ -9,7 +9,7 @@ import { inferSchema } from "./pipeline/schema-inference.js";
 import { datasetContextSchema, type DatasetContext } from "./pipeline/populate.js";
 import { populateWorkflow } from "./mastra/workflows/populate.js";
 import { updateWorkflow } from "./mastra/workflows/update.js";
-import { convex, internal } from "./convex.js";
+import { convex, api, internal } from "./convex.js";
 import { sendTransactionalEmail } from "./email/send.js";
 import { datasetReadyTemplate } from "./email/templates/dataset-ready.js";
 import { capture, shutdown as shutdownAnalytics } from "./analytics/posthog.js";
@@ -670,23 +670,25 @@ function startLocalRefreshScheduler(
 
 const fastify = Fastify({ logger: true });
 
-const allowedCorsOrigins = new Set([env.CLIENT_ORIGIN]);
+const allowedCorsOrigins = new Set(env.CLIENT_ORIGINS);
 if (env.IS_LOCAL_MODE) {
-  try {
-    const clientOrigin = new URL(env.CLIENT_ORIGIN);
-    if (
-      clientOrigin.hostname === "localhost" ||
-      clientOrigin.hostname === "127.0.0.1"
-    ) {
-      allowedCorsOrigins.add(
-        `${clientOrigin.protocol}//localhost${clientOrigin.port ? `:${clientOrigin.port}` : ""}`,
-      );
-      allowedCorsOrigins.add(
-        `${clientOrigin.protocol}//127.0.0.1${clientOrigin.port ? `:${clientOrigin.port}` : ""}`,
-      );
+  for (const origin of env.CLIENT_ORIGINS) {
+    try {
+      const clientOrigin = new URL(origin);
+      if (
+        clientOrigin.hostname === "localhost" ||
+        clientOrigin.hostname === "127.0.0.1"
+      ) {
+        allowedCorsOrigins.add(
+          `${clientOrigin.protocol}//localhost${clientOrigin.port ? `:${clientOrigin.port}` : ""}`,
+        );
+        allowedCorsOrigins.add(
+          `${clientOrigin.protocol}//127.0.0.1${clientOrigin.port ? `:${clientOrigin.port}` : ""}`,
+        );
+      }
+    } catch {
+      // Keep the configured origin only if the origin is not URL-shaped.
     }
-  } catch {
-    // Keep the configured origin only if CLIENT_ORIGIN is not URL-shaped.
   }
 }
 
@@ -722,6 +724,34 @@ fastify.addHook("onClose", async () => {
 // ────────────────────────────────────────────────────────────────────────
 
 fastify.get("/health", async () => ({ status: "ok" }));
+
+fastify.get("/share/:id", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  reply.header("Access-Control-Allow-Origin", "*");
+  let dataset;
+  try {
+    dataset = await convex.query(api.datasets.get, { id });
+  } catch (err) {
+    request.log.error({ err, id }, "Failed to fetch dataset for share route");
+    return reply.code(502).send({ error: "Failed to fetch dataset" });
+  }
+  if (!dataset || dataset.visibility !== "public") {
+    return reply.code(404).send({ error: "Dataset not found" });
+  }
+  return {
+    name: dataset.name,
+    description: dataset.description,
+    rowCount: dataset.rowCount,
+    columns: dataset.columns,
+  };
+});
+
+fastify.options("/share/:id", async (_request, reply) => {
+  reply.header("Access-Control-Allow-Origin", "*");
+  reply.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  reply.header("Access-Control-Allow-Headers", "Content-Type");
+  return reply.code(204).send();
+});
 
 fastify.get("/local-setup/status", async (_req, reply) => {
   if (!env.IS_LOCAL_MODE) {
