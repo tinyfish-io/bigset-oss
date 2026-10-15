@@ -1,0 +1,49 @@
+# All five entries are the same false positive, and none defers a fix.
+#
+# SheetJS stopped publishing xlsx to npm at 0.18.5, so every later (patched)
+# release exists only on their CDN. frontend/package.json therefore installs
+# https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz -- INF-3003 moved it off
+# the vulnerable npm ^0.18.5 range, which is the actual remediation here.
+#
+# bun.lock records that tarball URL in place of a version string, so osv-scanner
+# cannot version-compare and flags every xlsx advisory regardless of content.
+# (The sibling repo bigset-private needs only two ignores because its npm lock
+# records a real "0.20.3".)
+#
+# Verified 2026-09-14 by unpacking the pinned tarball: its own package.json
+# declares version 0.20.3. Every advisory below bounds strictly under that, so
+# the installed code is patched in all five cases:
+#
+#   GHSA-3x9f-74h4-2fqr  < 0.17.0
+#   GHSA-8vcr-vxm8-293m  < 0.17.0
+#   GHSA-g973-978j-2c3p  < 0.17.0
+#   GHSA-4r6h-8v6p-xvw6  < 0.19.3
+#   GHSA-5pgg-2g8v-p4x9  < 0.20.2
+#
+# To re-adjudicate: compare the pinned tarball's version against those ranges.
+# These stop being ignorable only if the pin is lowered or SheetJS resumes npm.
+
+[[IgnoredVulns]]
+id = "GHSA-3x9f-74h4-2fqr"
+ignoreUntil = 2026-12-13
+reason = "False positive on patched code: xlsx is installed from SheetJS's CDN at 0.20.3, above this advisory's < 0.17.0 range. bun.lock stores the tarball URL instead of a version, so osv-scanner cannot compare and flags it regardless."
+
+[[IgnoredVulns]]
+id = "GHSA-8vcr-vxm8-293m"
+ignoreUntil = 2026-12-13
+reason = "False positive on patched code: CDN xlsx 0.20.3 is above this advisory's < 0.17.0 range. Same bun.lock URL-as-version limitation as GHSA-3x9f-74h4-2fqr."
+
+[[IgnoredVulns]]
+id = "GHSA-g973-978j-2c3p"
+ignoreUntil = 2026-12-13
+reason = "False positive on patched code: CDN xlsx 0.20.3 is above this advisory's < 0.17.0 range. Same bun.lock URL-as-version limitation as GHSA-3x9f-74h4-2fqr."
+
+[[IgnoredVulns]]
+id = "GHSA-4r6h-8v6p-xvw6"
+ignoreUntil = 2026-12-13
+reason = "False positive on patched code: this is fixed in xlsx 0.19.3 and we install 0.20.3 from SheetJS's CDN. No npm release carries the fix because SheetJS stopped publishing at 0.18.5, which is why the advisory lists no fixed version."
+
+[[IgnoredVulns]]
+id = "GHSA-5pgg-2g8v-p4x9"
+ignoreUntil = 2026-12-13
+reason = "False positive on patched code: this ReDoS is fixed in xlsx 0.20.2 and we install 0.20.3 from SheetJS's CDN. Same npm-publishing limitation as GHSA-4r6h-8v6p-xvw6."
