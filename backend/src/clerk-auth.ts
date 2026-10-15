@@ -9,6 +9,7 @@ import { createClerkClient, type ClerkClient } from "@clerk/backend";
 
 import { env } from "./env.js";
 import { LOCAL_USER_ID } from "./local-credentials.js";
+import { tryApiKeyAuth } from "./api-key.js";
 
 /**
  * Clerk JWT verification for the Fastify backend.
@@ -79,13 +80,10 @@ export async function getUserEmail(
 export default fp(clerkPlugin, { name: "clerk-auth" });
 
 /**
- * Fastify preHandler that requires a valid Clerk session token.
- *
- * Reads `Authorization: Bearer <token>`, verifies it via Clerk's
- * `authenticateRequest`, and attaches `req.auth = { userId }` on success.
- * Returns 401 otherwise.
+ * Fastify preHandler that requires a valid Clerk session token — no API key fallback.
+ * Use for routes that must only be accessible via Clerk (e.g. API key management).
  */
-export async function requireAuth(
+export async function requireClerkAuth(
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
@@ -100,8 +98,6 @@ export async function requireAuth(
     return;
   }
 
-  // Wrap the Fastify request just enough for Clerk's authenticateRequest API.
-  // Clerk accepts a Web Request; build one from the headers we care about.
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) {
     if (typeof v === "string") headers.set(k, v);
@@ -116,7 +112,6 @@ export async function requireAuth(
   const requestState = await req.server.clerk.authenticateRequest(
     clerkRequest,
     {
-      // Anyone consuming our backend is our own frontend; lock to its origin.
       authorizedParties: [env.CLIENT_ORIGIN],
     },
   );
@@ -133,4 +128,24 @@ export async function requireAuth(
   }
 
   req.auth = { userId: auth.userId };
+}
+
+/**
+ * Fastify preHandler that accepts either a Clerk session token or a valid API key.
+ * Use for routes that should be accessible from both browser (Clerk) and
+ * programmatic clients (API key).
+ */
+export async function requireAuth(
+  req: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  if (env.IS_LOCAL_MODE) {
+    req.auth = { userId: LOCAL_USER_ID };
+    return;
+  }
+
+  const apiKeyHandled = await tryApiKeyAuth(req, reply);
+  if (apiKeyHandled) return;
+
+  await requireClerkAuth(req, reply);
 }
