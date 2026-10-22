@@ -104,7 +104,7 @@ export function buildSubagentTool(
           `[run_subagent] spawning subagent user=${authContext.authorizedUserId} run=${authContext.workflowRunId} dataset=${authorizedDatasetId} entity="${entity_hint}" pk=${JSON.stringify(primary_keys)}`,
         );
 
-        const agent = buildInvestigateAgent(
+        const agent = await buildInvestigateAgent(
           authorizedDatasetId,
           authContext,
           columns,

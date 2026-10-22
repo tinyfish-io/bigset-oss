@@ -22,9 +22,12 @@ import {
   getLocalSetupStatus,
   requireLocalSetupComplete,
   saveLocalCredential,
+  verifyLlmProviderApiKey,
   verifyOpenRouterApiKey,
+  verifyOrcaRouterApiKey,
   verifyTinyFishApiKey,
 } from "./local-credentials.js";
+import { OPENROUTER_PROVIDER, ORCAROUTER_PROVIDER } from "./config/llm-provider.js";
 
 /** Domain part of an email, for analytics (we never log full addresses). */
 function emailDomain(email: string): string {
@@ -200,7 +203,7 @@ async function ensureLocalSetupReady(reply: FastifyReply): Promise<boolean> {
     return true;
   } catch {
     await reply.code(428).send({
-      error: "Local setup is incomplete. Connect TinyFish and OpenRouter first.",
+      error: "Local setup is incomplete. Connect TinyFish and OpenRouter or OrcaRouter first.",
     });
     return false;
   }
@@ -770,6 +773,55 @@ fastify.post("/local-setup/openrouter-key", async (req, reply) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "OpenRouter verification failed";
     req.log.warn({ err }, "OpenRouter local setup verification failed");
+    return reply.code(400).send({ error: message });
+  }
+});
+
+fastify.post("/local-setup/orcarouter-key", async (req, reply) => {
+  if (!env.IS_LOCAL_MODE) {
+    return reply.code(404).send({ error: "Not found" });
+  }
+
+  const body = req.body as { apiKey?: string };
+  const apiKey = body?.apiKey?.trim();
+  if (!apiKey) {
+    return reply.code(400).send({ error: "OrcaRouter API key is required" });
+  }
+
+  try {
+    await verifyOrcaRouterApiKey(apiKey);
+    await saveLocalCredential("orcarouter", apiKey, "api_key");
+    return await getLocalSetupStatus();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "OrcaRouter verification failed";
+    req.log.warn({ err }, "OrcaRouter local setup verification failed");
+    return reply.code(400).send({ error: message });
+  }
+});
+
+fastify.post("/local-setup/llm-provider", async (req, reply) => {
+  if (!env.IS_LOCAL_MODE) {
+    return reply.code(404).send({ error: "Not found" });
+  }
+
+  const body = req.body as { provider?: unknown; apiKey?: string };
+  if (body.provider !== OPENROUTER_PROVIDER.id && body.provider !== ORCAROUTER_PROVIDER.id) {
+    return reply.code(400).send({ error: "Invalid LLM provider" });
+  }
+
+  const apiKey = body?.apiKey?.trim();
+  if (!apiKey) {
+    return reply.code(400).send({ error: `${body.provider} API key is required` });
+  }
+
+  try {
+    const provider = body.provider === ORCAROUTER_PROVIDER.id ? ORCAROUTER_PROVIDER : OPENROUTER_PROVIDER;
+    await verifyLlmProviderApiKey(provider, apiKey);
+    await saveLocalCredential(provider.id, apiKey, "api_key");
+    return await getLocalSetupStatus();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : `${body.provider} verification failed`;
+    req.log.warn({ err, provider: body.provider }, "LLM provider local setup verification failed");
     return reply.code(400).send({ error: message });
   }
 });

@@ -6,7 +6,7 @@
 
 import { api, internal, convex } from "../convex.js";
 import { env } from "../env.js";
-import { requireOpenRouterApiKey } from "../local-credentials.js";
+import { getLlmBaseUrl, requireLlmApiKey } from "../local-credentials.js";
 
 export interface OpenRouterModel {
   modelName: string;
@@ -127,13 +127,13 @@ export async function getModelConfig(
 }
 
 /**
- * Fetch models from OpenRouter REST API and return parsed models ready
- * for Convex storage.
+ * Fetch models from the active LLM gateway (OpenRouter or OrcaRouter) and
+ * return parsed models ready for Convex storage.
  */
 export async function fetchModelsFromOpenRouter(): Promise<OpenRouterModel[]> {
-  const apiKey = await requireOpenRouterApiKey();
+  const apiKey = await requireLlmApiKey();
 
-  const baseUrl = (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  const baseUrl = await getLlmBaseUrl();
   const url = new URL(`${baseUrl}/models`);
   url.searchParams.set("output_modalities", "text");
   url.searchParams.set("supported_parameters", "tools");
@@ -146,7 +146,7 @@ export async function fetchModelsFromOpenRouter(): Promise<OpenRouterModel[]> {
   });
 
   if (!response.ok) {
-    throw new Error(`OpenRouter API failed: ${response.status} ${response.statusText}`);
+    throw new Error(`LLM gateway API failed: ${response.status} ${response.statusText}`);
   }
 
   const json = (await response.json()) as {

@@ -94,6 +94,7 @@ On first launch, BigSet sends you to setup. You'll connect two services:
 |---------|--------------|-------------|
 | **TinyFish** | Web search + page fetching | [tinyfish.ai/api-keys](https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2) |
 | **OpenRouter** | LLM calls (schema inference + agents) | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
+| **OrcaRouter** | Alternative LLM gateway (optional) | [orcarouter.ai](https://www.orcarouter.ai) |
 
 Local API keys are stored in your OS keychain.
 
@@ -220,7 +221,10 @@ workspace.
 ### Step 3: Connect TinyFish and OpenRouter
 
 TinyFish powers web search and page fetching. OpenRouter routes LLM calls to
-the models BigSet uses for schema inference and agents.
+the models BigSet uses for schema inference and agents. OrcaRouter is a
+drop-in alternative LLM gateway: connect an OrcaRouter key (or set
+`LLM_PROVIDER=orcarouter` in `.env`) and BigSet routes the same model calls
+through it.
 
 1. Create a TinyFish key at [agent.tinyfish.ai/api-keys](https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2)
 2. Create an OpenRouter key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)

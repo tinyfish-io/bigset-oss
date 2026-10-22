@@ -12,6 +12,7 @@ import {
 import {
   getLocalSetupStatus,
   saveOpenRouterApiKey,
+  saveOrcaRouterApiKey,
   saveTinyFishApiKey,
   type LocalSetupStatus,
   type ServiceSetupStatus,
@@ -22,7 +23,7 @@ export default function SetupPage() {
   const router = useRouter();
   const [status, setStatus] = useState<LocalSetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<"tinyfish" | "openrouter" | null>(null);
+  const [modal, setModal] = useState<"tinyfish" | "openrouter" | "orcarouter" | null>(null);
 
   useEffect(() => {
     if (!isLocalMode) {
@@ -104,6 +105,21 @@ export default function SetupPage() {
               helperHref="https://openrouter.ai/settings/keys"
               helperLabel="Need an OpenRouter key?"
               helperDescription="Open the OpenRouter keys page"
+            />
+
+            <ServiceCard
+              brand={<OrcaRouterBrand />}
+              description="BigSet uses OrcaRouter's API to power BigSet with AI model access."
+              status={status?.services.orcarouter}
+              primaryLabel={
+                status?.services.orcarouter.configured
+                  ? "Update key"
+                  : "Add API key"
+              }
+              onPrimary={() => setModal("orcarouter")}
+              helperHref="https://www.orcarouter.ai"
+              helperLabel="Learn more about OrcaRouter"
+              helperDescription="Open orcarouter.ai"
             />
           </div>
 
@@ -252,12 +268,31 @@ function OpenRouterBrand() {
   );
 }
 
+function OrcaRouterBrand() {
+  return (
+    <div className="flex items-center gap-2 text-black dark:invert">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M12 2a4 4 0 0 1 4 4 4 4 0 0 1 4 4 4 4 0 0 1-4 4 4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1-4-4 4 4 0 0 1 4-4 4 4 0 0 1 4-4Z" />
+        <circle cx="12" cy="12" r="2" fill="var(--color-surface, #fff)" />
+      </svg>
+      <span className="text-xl font-semibold tracking-tight">OrcaRouter</span>
+    </div>
+  );
+}
+
 function ApiKeyModal({
   service,
   onClose,
   onSaved,
 }: {
-  service: "tinyfish" | "openrouter";
+  service: "tinyfish" | "openrouter" | "orcarouter";
   onClose: () => void;
   onSaved: (status: LocalSetupStatus) => void;
 }) {
@@ -265,6 +300,8 @@ function ApiKeyModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isTinyFish = service === "tinyfish";
+  const serviceLabel =
+    service === "orcarouter" ? "OrcaRouter" : service === "openrouter" ? "OpenRouter" : "TinyFish";
 
   async function handleSubmit() {
     if (!apiKey.trim() || saving) return;
@@ -273,7 +310,9 @@ function ApiKeyModal({
     try {
       const next = isTinyFish
         ? await saveTinyFishApiKey(apiKey.trim())
-        : await saveOpenRouterApiKey(apiKey.trim());
+        : service === "orcarouter"
+          ? await saveOrcaRouterApiKey(apiKey.trim())
+          : await saveOpenRouterApiKey(apiKey.trim());
       onSaved(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
@@ -298,12 +337,10 @@ function ApiKeyModal({
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold">
-              {isTinyFish ? "TinyFish API key" : "OpenRouter API key"}
+              {serviceLabel} API key
             </h2>
             <p className="mt-1 text-xs text-muted">
-              {isTinyFish
-                ? "BigSet verifies the key and stores it in your OS keychain."
-                : "BigSet verifies the key and stores it in your OS keychain."}
+              BigSet verifies the key and stores it in your OS keychain.
             </p>
           </div>
           <button
@@ -325,7 +362,13 @@ function ApiKeyModal({
               type="password"
               autoFocus
               className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-foreground/30"
-              placeholder={isTinyFish ? "tf_..." : "sk-or-..."}
+              placeholder={
+                isTinyFish
+                  ? "tf_..."
+                  : service === "orcarouter"
+                    ? "sk-orca-..."
+                    : "sk-or-..."
+              }
             />
           </label>
 
@@ -340,7 +383,9 @@ function ApiKeyModal({
               href={
                 isTinyFish
                   ? "https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2"
-                  : "https://openrouter.ai/settings/keys"
+                  : service === "orcarouter"
+                    ? "https://www.orcarouter.ai"
+                    : "https://openrouter.ai/settings/keys"
               }
               target="_blank"
               rel="noreferrer"
