@@ -45,7 +45,7 @@
     "esbuild": "^0.28.1",
     "fast-uri": "^3.1.7",
     "find-my-way": "^9.9.0",
-    "hono": "^4.13.7",
+    "hono": "^4.13.13",
     "js-cookie": "^3.0.7",
     "js-yaml": "^3.15.2",
     "serve-handler": {
