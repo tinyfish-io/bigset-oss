@@ -218,9 +218,11 @@ export function ModelSideSheet({
                           </div>
                           <div className="text-right shrink-0 w-16">
                             <p className="text-[11px] text-muted">
-                              {model.contextLength >= 1000
-                                ? `${(model.contextLength / 1000).toLocaleString()}K`
-                                : model.contextLength.toLocaleString()}
+                              {model.contextLength === 0
+                                ? "—"
+                                : model.contextLength >= 1000
+                                  ? `${(model.contextLength / 1000).toLocaleString()}K`
+                                  : model.contextLength.toLocaleString()}
                             </p>
                           </div>
                           <div className="text-right shrink-0 w-14">

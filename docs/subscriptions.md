@@ -23,9 +23,14 @@ When no OpenRouter key is configured, BigSet picks defaults automatically:
 
 | Role | Claude subscription | ChatGPT subscription |
 |------|---------------------|----------------------|
-| Schema inference | `claude-code/sonnet` | Codex's default for your plan (today `gpt-6.1-sol`) |
+| Schema inference | `claude-code/sonnet` | Codex's default for your plan (Nov 2026: `gpt-6.1-sol`) |
 | Populate orchestrator | `claude-code/sonnet` | same |
-| Investigate subagents | `claude-code/haiku` | same |
+| Investigate subagents | `claude-code/haiku` | the fast tier, `gpt-6-luna`, when your plan has it |
+
+Current Codex lineup (Nov 2026, [OpenAI](https://learn.chatgpt.com/docs/models)):
+GPT-6.1 Sol (default), GPT-6 Astra (frontier), GPT-6.1 Terra (fast everyday),
+GPT-6 Luna (fast and cheap). GPT-5.5 retired for ChatGPT sign-ins on Oct 14,
+2026.
 
 Change any of them under **Settings → Models**. Subscription models are listed
 first, with a cost of 0. The Codex list comes from Codex itself, so it always
@@ -51,15 +56,32 @@ a slug into a model.
 Each CLI runs its own agent loop. BigSet passes its tools (`search_web`,
 `fetch_page`, `insert_row`, `update_row`, `run_subagent`) to the CLI through
 an MCP server that lives inside the BigSet backend. The tool code runs in the
-backend with the same dataset scoping as the OpenRouter path. The CLIs' own
-tools are turned off:
+backend with the same dataset scoping as the OpenRouter path.
 
-- Claude Code: no built-in tools (`tools: []`), only `mcp__bigset__*` allowed,
-  no user settings, CLAUDE.md or hooks loaded, sessions not saved to your
-  history.
-- Codex: read-only sandbox, its own web search disabled
-  (`web_search = "disabled"`). One `codex app-server` process is shared and
+### Isolation
+
+The agents read untrusted web pages, so a prompt injection must not reach
+anything on your machine. Both CLIs get BigSet's tools and nothing else:
+
+- **Claude Code:** no built-in tools (`tools: []`), only `mcp__bigset__*`
+  allowed, other permission requests denied, none of your settings, CLAUDE.md,
+  hooks or MCP servers loaded, sessions not saved to your history. Each call
+  is stateless (a fresh model instance per call).
+- **Codex:** by default it would load your whole setup: your MCP servers,
+  plugins, skills, hooks, global AGENTS.md, a JS REPL and a shell that can
+  read any file even in the read-only sandbox. BigSet switches all of that
+  off with `-c` overrides (`features.shell_tool`, `features.js_repl`,
+  `features.apps`, `features.plugins`, `features.hooks`, `skills.*`,
+  `project_doc_max_bytes = 0`, `web_search = "disabled"`, and
+  `mcp_servers.<name>.enabled = false` for each server named in your
+  `config.toml`; names only, values are never read). Auto-approve is off; only
+  tool calls to BigSet's own `bigset` server are approved. One
+  `codex app-server` process is shared, closed after 5 minutes idle, and
   stopped when the backend shuts down.
+
+Verified against the real CLIs: asked to read a canary file outside its
+folder, Codex with its defaults returned the file's contents; with BigSet's
+overrides both Codex and Claude reply that they cannot.
 
 Both run in an empty temporary directory so no project files leak in as
 context.
@@ -86,8 +108,14 @@ The backend container cannot see your Mac's keychain login.
 - **Plan limits.** A populate run fans out parallel subagents, and each one is
   a CLI turn. Large runs can hit your plan's usage window. Haiku as the
   subagent default helps on Claude.
+- **Cost per row (measured, Nov 2026).** Claude Code (Sonnet orchestrator,
+  Haiku subagents): about 30K input tokens per row. Codex (GPT-6.1 Sol,
+  GPT-6 Luna subagents): about 106K, because every Codex call carries its own
+  agent instructions. Claude stretches a plan's limits further.
 - **Speed.** Each call starts a CLI turn: Claude Code takes about 2-5 s per
-  call, Codex about 8-25 s.
+  call, Codex about 5-25 s. A 5-row populate took about 3.5 minutes on Claude.
+- Run stats count one step per agent call: the CLI runs the whole tool loop
+  inside that call. Token, search and fetch counts are complete.
 - **Terms.** This drives the official CLIs on your own machine with your own
   login. Whether a plan allows this kind of automated use is up to the
   provider's terms. Check them if you plan heavy use.

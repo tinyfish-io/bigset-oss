@@ -17,8 +17,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { LanguageModelV3 as LanguageModel } from "@ai-sdk/provider";
 import { tool as aiTool, type Tool } from "ai";
@@ -62,7 +62,9 @@ export interface RoleModelSlugs {
 
 function subscriptionModel(slug: string, name: string): SubscriptionModelInfo {
   // Costs are 0: usage is billed to the user's subscription, not per token.
-  return { modelName: name, canonicalSlug: slug, contextLength: 200_000, promptCost: 0, completionCost: 0 };
+  // contextLength 0 = unknown: neither CLI reports a context window, and
+  // guessing one would be wrong for some plans (the picker shows "—").
+  return { modelName: name, canonicalSlug: slug, contextLength: 0, promptCost: 0, completionCost: 0 };
 }
 
 // Claude Code resolves these aliases to the current Opus / Sonnet / Haiku.
@@ -90,8 +92,18 @@ async function codexModels(): Promise<{ models: SubscriptionModelInfo[]; default
   if (codexModelsCache && Date.now() - codexModelsCache.at < CODEX_MODELS_TTL_MS) return codexModelsCache;
   try {
     const listed = await codex().listModels();
-    const models = listed.models
-      .filter((m) => !(m as { hidden?: boolean }).hidden)
+    // Skip superseded models (Codex sets `upgrade` to their replacement).
+    // The catalog still lists some the server already refuses for ChatGPT
+    // sign-ins, e.g. gpt-5.5 after its Oct 14 2026 retirement.
+    const current = listed.models.filter(
+      (m) => !(m as { hidden?: boolean }).hidden && !(m as { upgrade?: string | null }).upgrade,
+    );
+    if (current.length < listed.models.length) {
+      console.log(
+        `[subscriptions] codex hid ${listed.models.length - current.length} hidden or superseded models`,
+      );
+    }
+    const models = current
       .map((m) => {
         const id = (m as { id?: string; model?: string }).id ?? (m as { model?: string }).model ?? "";
         const name = (m as { displayName?: string }).displayName ?? id;
@@ -121,9 +133,14 @@ export async function subscriptionModels(backend: SubscriptionBackend): Promise<
 /** Defaults per role when a subscription is the active model backend. */
 export async function subscriptionDefaults(backend: SubscriptionBackend): Promise<RoleModelSlugs | null> {
   if (backend === "claude-code") return CLAUDE_CODE_DEFAULTS;
-  const { defaultSlug } = await codexModels();
+  const { models, defaultSlug } = await codexModels();
   if (!defaultSlug) return null;
-  return { schemaInference: defaultSlug, populateOrchestrator: defaultSlug, investigateSubagent: defaultSlug };
+  // Subagents fan out in parallel, so use OpenAI's fast tier ("Luna", e.g.
+  // gpt-6-luna) when the account has it, like Haiku on Claude. The catalog
+  // lists newest first. Schema and orchestrator keep Codex's default
+  // (gpt-6.1-sol as of Nov 2026).
+  const fast = models.find((m) => /-luna$/.test(m.canonicalSlug))?.canonicalSlug ?? defaultSlug;
+  return { schemaInference: defaultSlug, populateOrchestrator: defaultSlug, investigateSubagent: fast };
 }
 
 export function subscriptionBackendOf(slug: string): SubscriptionBackend | null {
@@ -299,6 +316,61 @@ const AGENT_CWD = mkdtempSync(join(tmpdir(), "bigset-agent-"));
 
 const claudeCode = createClaudeCode();
 
+/**
+ * Names of the user's own MCP servers from $CODEX_HOME/config.toml (headers
+ * only, never values) so each can be switched off for BigSet's sessions.
+ */
+function userCodexMcpServers(): string[] {
+  const home = process.env.CODEX_HOME || join(homedir(), ".codex");
+  try {
+    const toml = readFileSync(join(home, "config.toml"), "utf8");
+    const names = new Set<string>();
+    for (const m of toml.matchAll(/^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))/gm)) {
+      names.add(m[1] ?? m[2]);
+    }
+    names.delete(BIGSET_MCP_SERVER);
+    return [...names];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Codex otherwise runs with the user's whole setup: their MCP servers
+ * (Slack, mail, ...), plugins, skills, hooks, global AGENTS.md, a JS REPL and
+ * a shell that can read any file even in the read-only sandbox. A page the
+ * agent fetches is untrusted, so a prompt injection could read local secrets
+ * and leak them through fetch_page or insert_row. Verified: with Codex
+ * defaults the agent read a canary file outside its folder; with these
+ * overrides it cannot. Keys from the Codex config reference
+ * (learn.chatgpt.com/docs/config-file/config-reference). Also cuts input
+ * tokens per call by about half.
+ */
+function codexIsolationOverrides(): Record<string, string | number | boolean> {
+  const userServers = userCodexMcpServers();
+  console.log(`[subscriptions] codex isolation: disabling ${userServers.length} user MCP servers`);
+  return {
+    // BigSet's search_web (TinyFish) replaces Codex's own web search.
+    web_search: "disabled",
+    "features.shell_tool": false,
+    "features.js_repl": false,
+    "features.code_mode.enabled": false,
+    "features.multi_agent": false,
+    "features.apps": false,
+    "features.plugins": false,
+    "features.remote_plugin": false,
+    "features.memories": false,
+    "features.chronicle": false,
+    "features.hooks": false,
+    "features.goals": false,
+    "features.view_image": false,
+    "skills.bundled.enabled": false,
+    "skills.include_instructions": false,
+    project_doc_max_bytes: 0,
+    ...Object.fromEntries(userServers.map((name) => [`mcp_servers.${name}.enabled`, false])),
+  };
+}
+
 let codexProvider: CodexAppServerProvider | null = null;
 function codex(): CodexAppServerProvider {
   // One long-lived `codex app-server` process serves every call; each call
@@ -308,13 +380,26 @@ function codex(): CodexAppServerProvider {
       codexPath: codexPath(),
       cwd: AGENT_CWD,
       sandboxPolicy: "read-only",
-      // Approve calls to BigSet's own MCP tools without a prompt (this also
-      // stands in for an approval policy; nothing ever waits on a human).
-      autoApprove: true,
-      // Turn off Codex's own web search so it uses BigSet's search_web
-      // (TinyFish). Current key is top-level `web_search`; the old
-      // `tools.web_search = false` is ignored by recent CLIs.
-      configOverrides: { web_search: "disabled" },
+      // Never auto-approve: command and file-change requests are declined.
+      autoApprove: false,
+      serverRequests: {
+        // Approve tool calls to BigSet's own MCP server only.
+        onMcpElicitation: async (request) => {
+          const params = request.params as { serverName?: string; _meta?: { codex_approval_kind?: string } };
+          const ours =
+            params.serverName === BIGSET_MCP_SERVER && params._meta?.codex_approval_kind === "mcp_tool_call";
+          if (!ours) {
+            console.warn(
+              `[subscriptions] codex declined ${params._meta?.codex_approval_kind ?? "elicitation"} from server=${params.serverName ?? "unknown"}`,
+            );
+          }
+          return ours ? { action: "accept", content: {} } : { action: "decline", content: null };
+        },
+      },
+      // Don't keep an idle Codex process around (e.g. after the settings
+      // page listed models but Claude runs the agents); restarts on demand.
+      idleTimeoutMs: 5 * 60_000,
+      configOverrides: codexIsolationOverrides(),
     },
   });
   return codexProvider;
@@ -325,6 +410,25 @@ export async function closeSubscriptionProviders(): Promise<void> {
   const provider = codexProvider;
   codexProvider = null;
   await provider.close();
+}
+
+/**
+ * A Claude Code model instance resumes its own previous session on its next
+ * call. BigSet resends the full history every call, and sessions are not
+ * persisted, so a second call on one instance (e.g. the schema-inference
+ * retry) failed with "No conversation found with session ID". Build a fresh
+ * instance per call so every call is stateless.
+ */
+function statelessPerCall(make: () => LanguageModel): LanguageModel {
+  const template = make();
+  return {
+    specificationVersion: template.specificationVersion,
+    provider: template.provider,
+    modelId: template.modelId,
+    supportedUrls: template.supportedUrls,
+    doGenerate: (options) => make().doGenerate(options),
+    doStream: (options) => make().doStream(options),
+  };
 }
 
 export interface SubscriptionModelOptions {
@@ -346,21 +450,24 @@ export function subscriptionLanguageModel(
   const toolNames = Object.keys(tools);
 
   if (backend === "claude-code") {
-    return claudeCode(modelId, {
-      pathToClaudeCodeExecutable: claudePath(),
-      cwd: AGENT_CWD,
-      // No built-in tools (Bash, Read, WebFetch, ...): only BigSet's tools.
-      tools: [],
-      mcpServers:
-        toolNames.length > 0
-          ? { [BIGSET_MCP_SERVER]: createAiSdkMcpServer(BIGSET_MCP_SERVER, toAiSdkTools(tools)) }
-          : undefined,
-      allowedTools: toolNames.map((name) => `mcp__${BIGSET_MCP_SERVER}__${name}`),
-      permissionPrompts: "none",
-      maxTurns: maxSteps,
-      // Keep BigSet's runs out of the user's Claude Code session history.
-      persistSession: false,
-    });
+    const mcpServers =
+      toolNames.length > 0
+        ? { [BIGSET_MCP_SERVER]: createAiSdkMcpServer(BIGSET_MCP_SERVER, toAiSdkTools(tools)) }
+        : undefined;
+    return statelessPerCall(() =>
+      claudeCode(modelId, {
+        pathToClaudeCodeExecutable: claudePath(),
+        cwd: AGENT_CWD,
+        // No built-in tools (Bash, Read, WebFetch, ...): only BigSet's tools.
+        tools: [],
+        mcpServers,
+        allowedTools: toolNames.map((name) => `mcp__${BIGSET_MCP_SERVER}__${name}`),
+        permissionPrompts: "none",
+        maxTurns: maxSteps,
+        // Keep BigSet's runs out of the user's Claude Code session history.
+        persistSession: false,
+      }),
+    );
   }
 
   if (backend === "codex") {
