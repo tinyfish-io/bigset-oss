@@ -197,8 +197,12 @@ convex-env:
 		exit 1; \
 	fi; \
 	if [[ "$$prod" != "1" ]]; then \
-		$(CONVEX_CLI_RUN) -e CONVEX_SELF_HOSTED_ADMIN_KEY="$$admin_key" frontend sh -lc \
-		'npx convex env set BIGSET_LOCAL_MODE 1 --url $(CONVEX_CLI_URL) --admin-key "$$CONVEX_SELF_HOSTED_ADMIN_KEY"'; \
+		local_issuer="$$(grep '^CLERK_JWT_ISSUER_DOMAIN=' .env | cut -d= -f2-)"; \
+		if [[ -z "$$local_issuer" || "$$local_issuer" == "https://your-app.clerk.accounts.dev" ]]; then \
+			local_issuer="https://bigset-local.invalid"; \
+		fi; \
+		$(CONVEX_CLI_RUN) -e CONVEX_SELF_HOSTED_ADMIN_KEY="$$admin_key" -e CLERK_JWT_ISSUER_DOMAIN="$$local_issuer" frontend sh -lc \
+		'npx convex env set BIGSET_LOCAL_MODE 1 --url $(CONVEX_CLI_URL) --admin-key "$$CONVEX_SELF_HOSTED_ADMIN_KEY" && npx convex env set CLERK_JWT_ISSUER_DOMAIN "$$CLERK_JWT_ISSUER_DOMAIN" --url $(CONVEX_CLI_URL) --admin-key "$$CONVEX_SELF_HOSTED_ADMIN_KEY"'; \
 		exit 0; \
 	fi; \
 	issuer="$$(grep '^CLERK_JWT_ISSUER_DOMAIN=' .env | cut -d= -f2-)"; \
