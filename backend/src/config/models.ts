@@ -1,12 +1,21 @@
 /**
  * Backend configuration for AI models.
  *
- * Defines the typed interfaces and constants for OpenRouter model management.
+ * Models come from OpenRouter (pay per token, needs an API key) or from the
+ * user's own Claude / ChatGPT subscription through the Claude Code or Codex
+ * CLI (slugs prefixed claude-code/ or codex/; see ../ai/subscriptions.ts).
  */
 
 import { api, internal, convex } from "../convex.js";
 import { env } from "../env.js";
-import { requireOpenRouterApiKey } from "../local-credentials.js";
+import { getOpenRouterApiKey, requireOpenRouterApiKey } from "../local-credentials.js";
+import {
+  getAllSubscriptionStatuses,
+  subscriptionDefaults,
+  subscriptionModels,
+  type RoleModelSlugs,
+  type SubscriptionBackend,
+} from "../ai/subscriptions.js";
 
 export interface OpenRouterModel {
   modelName: string;
@@ -28,6 +37,43 @@ export const DEFAULT_MODEL_IDS = {
   INVESTIGATE_SUBAGENT: env.INVESTIGATE_SUBAGENT_MODEL,
 } as const;
 
+export type ModelBackend = "openrouter" | SubscriptionBackend;
+
+export type RoleModels = RoleModelSlugs;
+
+/**
+ * Which backend the defaults use when a user has not picked models.
+ *
+ * BIGSET_MODEL_BACKEND=openrouter|claude-code|codex forces one. Otherwise an
+ * OpenRouter key wins (existing setups keep their behavior), then a signed-in
+ * Claude Code CLI, then a signed-in Codex CLI.
+ */
+export async function activeModelBackend(): Promise<ModelBackend> {
+  const forced = env.BIGSET_MODEL_BACKEND;
+  if (forced === "openrouter" || forced === "claude-code" || forced === "codex") return forced;
+  if (forced) console.warn(`[models] ignoring unknown BIGSET_MODEL_BACKEND="${forced}"`);
+
+  if (await getOpenRouterApiKey().catch(() => undefined)) return "openrouter";
+  const subscriptions = await getAllSubscriptionStatuses();
+  if (subscriptions["claude-code"].available) return "claude-code";
+  if (subscriptions.codex.available) return "codex";
+  return "openrouter";
+}
+
+export async function defaultModelConfig(): Promise<RoleModels> {
+  const backend = await activeModelBackend();
+  if (backend !== "openrouter") {
+    const defaults = await subscriptionDefaults(backend);
+    if (defaults) return defaults;
+    console.warn(`[models] no default models for ${backend}; falling back to OpenRouter defaults`);
+  }
+  return {
+    schemaInference: DEFAULT_MODEL_IDS.SCHEMA_INFERENCE,
+    populateOrchestrator: DEFAULT_MODEL_IDS.POPULATE_ORCHESTRATOR,
+    investigateSubagent: DEFAULT_MODEL_IDS.INVESTIGATE_SUBAGENT,
+  };
+}
+
 /**
  * Model roles for the settings UI.
  */
@@ -45,17 +91,31 @@ export const MODEL_ROLES = [
 export const EXCLUDED_MODEL_SLUGS: string[] = [];
 
 /**
- * Fetch all cached models from Convex.
- * If the cache is empty, fetches from OpenRouter, stores in Convex, and returns.
+ * Every model the user can pick: models of each signed-in subscription CLI,
+ * then the cached OpenRouter list. If the OpenRouter cache is empty and a key
+ * is configured, fetches from OpenRouter and stores the result in Convex.
  */
 export async function getCachedModels(): Promise<OpenRouterModel[]> {
+  const subscriptions = await getAllSubscriptionStatuses();
+  const signedIn = (Object.keys(subscriptions) as SubscriptionBackend[]).filter(
+    (backend) => subscriptions[backend].available,
+  );
+  const subscriptionList = (await Promise.all(signedIn.map(subscriptionModels))).flat();
+
   const models = await convex.query(api.openRouterModels.list, {});
   const cached = models as unknown as OpenRouterModel[];
-  if (cached.length > 0) return cached;
+  if (cached.length > 0) return [...subscriptionList, ...cached];
+
+  if (!(await getOpenRouterApiKey().catch(() => undefined))) {
+    console.log(
+      `[models] OpenRouter not configured; listing ${subscriptionList.length} subscription models only`,
+    );
+    return subscriptionList;
+  }
 
   const fetched = await fetchModelsFromOpenRouter();
   await upsertModelBatch(fetched);
-  return fetched;
+  return [...subscriptionList, ...fetched];
 }
 
 /**
@@ -108,21 +168,19 @@ export async function upsertModelConfig(
 
 /**
  * Fetch the model configuration for a specific user from Convex.
- * If the user has no saved config, returns the system defaults from env.
+ * Roles the user has not set fall back to defaultModelConfig(), which follows
+ * the active backend (OpenRouter or a subscription CLI).
  * Callers always get a complete config — never null.
  */
-export async function getModelConfig(
-  userId: string
-): Promise<{
-  schemaInference: string;
-  populateOrchestrator: string;
-  investigateSubagent: string;
-}> {
+export async function getModelConfig(userId: string): Promise<RoleModels> {
   const config = await convex.query(internal.modelConfig.getInternal, { userId });
+  const needsDefaults =
+    !config?.schemaInference || !config?.populateOrchestrator || !config?.investigateSubagent;
+  const defaults = needsDefaults ? await defaultModelConfig() : null;
   return {
-    schemaInference: config?.schemaInference ?? DEFAULT_MODEL_IDS.SCHEMA_INFERENCE,
-    populateOrchestrator: config?.populateOrchestrator ?? DEFAULT_MODEL_IDS.POPULATE_ORCHESTRATOR,
-    investigateSubagent: config?.investigateSubagent ?? DEFAULT_MODEL_IDS.INVESTIGATE_SUBAGENT,
+    schemaInference: config?.schemaInference ?? defaults!.schemaInference,
+    populateOrchestrator: config?.populateOrchestrator ?? defaults!.populateOrchestrator,
+    investigateSubagent: config?.investigateSubagent ?? defaults!.investigateSubagent,
   };
 }
 

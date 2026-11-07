@@ -9,6 +9,11 @@ import type {
   ConnectionMethod,
   LocalCredentialService,
 } from "./local-credential-types.js";
+import {
+  getAllSubscriptionStatuses,
+  type SubscriptionBackend,
+  type SubscriptionStatus,
+} from "./ai/subscriptions.js";
 
 export const LOCAL_USER_ID = "local_user_default";
 
@@ -24,6 +29,11 @@ export interface LocalSetupStatus {
   required: boolean;
   complete: boolean;
   services: Record<LocalCredentialService, ServiceSetupStatus>;
+  /**
+   * Signed-in Claude Code / Codex CLIs. Either one stands in for OpenRouter:
+   * setup is complete with TinyFish plus OpenRouter or a subscription.
+   */
+  subscriptions: Record<SubscriptionBackend, SubscriptionStatus>;
 }
 
 function isPlaceholder(value: string, service: LocalCredentialService): boolean {
@@ -145,6 +155,7 @@ export async function getLocalSetupStatus(): Promise<LocalSetupStatus> {
       mode: "production",
       required: false,
       complete: true,
+      subscriptions: await getAllSubscriptionStatuses(),
       services: {
         tinyfish: {
           configured: !!tinyfish,
@@ -162,8 +173,11 @@ export async function getLocalSetupStatus(): Promise<LocalSetupStatus> {
     };
   }
 
-  const tinyfishLocal = await localCredentialForStatus("tinyfish");
-  const openrouterLocal = await localCredentialForStatus("openrouter");
+  const [tinyfishLocal, openrouterLocal, subscriptions] = await Promise.all([
+    localCredentialForStatus("tinyfish"),
+    localCredentialForStatus("openrouter"),
+    getAllSubscriptionStatuses(),
+  ]);
 
   const tinyfish: ServiceSetupStatus = tinyfishLocal
     ? {
@@ -193,11 +207,17 @@ export async function getLocalSetupStatus(): Promise<LocalSetupStatus> {
         verifiedAt: null,
       };
 
+  const hasModels =
+    openrouter.configured ||
+    subscriptions["claude-code"].available ||
+    subscriptions.codex.available;
+
   return {
     mode: "local",
     required: true,
-    complete: tinyfish.configured && openrouter.configured,
+    complete: tinyfish.configured && hasModels,
     services: { tinyfish, openrouter },
+    subscriptions,
   };
 }
 

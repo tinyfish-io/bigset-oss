@@ -121,7 +121,7 @@ export default function ModelSettingsPage() {
 
         <SettingsHeader
           title="Model Settings"
-          subtitle="Configure AI models for different tasks. Models are fetched from OpenRouter."
+          subtitle="Configure AI models for different tasks. Lists OpenRouter models plus models from a signed-in Claude Code or Codex subscription."
         />
 
         <div className="space-y-2">

@@ -4,7 +4,7 @@ import { datasetContextSchema, populateColumnSchema } from "../../pipeline/popul
 import { convex, internal } from "../../convex.js";
 import { buildRefreshAgent } from "../agents/refresh.js";
 import { authContextSchema } from "./populate.js";
-import { requireOpenRouterApiKey } from "../../local-credentials.js";
+import { openRouterKeyFor } from "../../ai/language-model.js";
 import { RunMetrics } from "../run-metrics.js";
 import { saveRunMetrics } from "../save-run-metrics.js";
 import { getSignal } from "../../abort-registry.js";
@@ -70,6 +70,7 @@ const refreshOutputSchema = z.object({
 });
 
 const MAX_CONCURRENT = 5;
+const REFRESH_MAX_STEPS = 10;
 
 async function processWithConcurrency<T>(
   items: T[],
@@ -100,7 +101,7 @@ const refreshRowsStep = createStep({
 
     const metrics = new RunMetrics();
     const startedAt = Date.now();
-    const openRouterApiKey = await requireOpenRouterApiKey();
+    const openRouterApiKey = await openRouterKeyFor(authContext.modelConfig.investigateSubagent);
 
     const pkColumns = columns.filter((c) => c.isPrimaryKey);
 
@@ -111,6 +112,7 @@ const refreshRowsStep = createStep({
           authContext,
           columns,
           openRouterApiKey,
+          REFRESH_MAX_STEPS,
         );
 
         const pkBlock =
@@ -141,7 +143,7 @@ ${row.rowSummary ? `\nPrevious summary: ${row.rowSummary}` : ""}
 ${row.howFound ? `\nPreviously found via: ${row.howFound}` : ""}`;
 
         const abortSignal = getSignal(datasetId);
-        const result = await agent.generate(prompt, { abortSignal, maxSteps: 10 });
+        const result = await agent.generate(prompt, { abortSignal, maxSteps: REFRESH_MAX_STEPS });
 
         // Accumulate token usage into the investigate tier (refresh agents map
         // to the investigate tier so the runStats schema needs no new columns).
