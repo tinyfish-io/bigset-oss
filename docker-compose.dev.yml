@@ -130,7 +130,7 @@ services:
         condition: service_healthy
 
   convex:
-    image: ghcr.io/get-convex/convex-backend:latest
+    image: ghcr.io/convex/convex-backend:latest
     ports:
       - "3210:3210"
       - "3211:3211"
@@ -154,7 +154,7 @@ services:
         condition: service_healthy
 
   convex-dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:latest
+    image: ghcr.io/convex/convex-dashboard:latest
     ports:
       - "6791:6791"
     environment:
