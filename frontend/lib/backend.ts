@@ -344,6 +344,51 @@ export async function update(
   return res.json();
 }
 
+export interface ApiKeyInfo {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+export interface CreatedApiKey {
+  id: string;
+  key: string;
+  keyPrefix: string;
+  name: string;
+}
+
+export async function listApiKeys(token: string): Promise<{ keys: ApiKeyInfo[] }> {
+  const res = await fetch(`${BACKEND_URL}/api-keys`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return res.json();
+}
+
+export async function createApiKey(name: string, token: string): Promise<CreatedApiKey> {
+  const res = await fetch(`${BACKEND_URL}/api-keys`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return res.json();
+}
+
+export async function revokeApiKey(id: string, token: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api-keys/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(await errorMessage(res));
+}
+
 export async function stopPopulation(
   datasetId: string,
   token: string,

@@ -1,0 +1,12 @@
+node_modules/
+sidebar/
+.git/
+*.md
+.clasp.json
+package*.json
+tsconfig.json
+vite.config.ts
+*.ts
+
+!src/**
+src/**/*.ts
