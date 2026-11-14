@@ -70,6 +70,12 @@ export interface ServiceSetupStatus {
   verifiedAt: number | null;
 }
 
+export interface SubscriptionStatus {
+  available: boolean;
+  plan: string | null;
+  reason: string | null;
+}
+
 export interface LocalSetupStatus {
   mode: "local" | "production";
   required: boolean;
@@ -77,6 +83,11 @@ export interface LocalSetupStatus {
   services: {
     tinyfish: ServiceSetupStatus;
     openrouter: ServiceSetupStatus;
+  };
+  /** Signed-in Claude Code / Codex CLIs; either one replaces OpenRouter. */
+  subscriptions?: {
+    "claude-code": SubscriptionStatus;
+    codex: SubscriptionStatus;
   };
 }
 

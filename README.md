@@ -95,6 +95,12 @@ On first launch, BigSet sends you to setup. You'll connect two services:
 | **TinyFish** | Web search + page fetching | [tinyfish.ai/api-keys](https://agent.tinyfish.ai/api-keys?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2) |
 | **OpenRouter** | LLM calls (schema inference + agents) | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
 
+**Already pay for Claude or ChatGPT?** Skip OpenRouter. Sign in to
+[Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude auth login`)
+or [Codex](https://developers.openai.com/codex/cli) (`codex login`) on the same
+computer, and BigSet runs its models on your subscription. No API key, no
+per-token bill. See [docs/subscriptions.md](docs/subscriptions.md).
+
 Local API keys are stored in your OS keychain.
 
 For a one-off run without installing globally:
@@ -228,6 +234,11 @@ the models BigSet uses for schema inference and agents.
 
 OpenRouter is pay-as-you-go; $5-10 is plenty to start.
 
+Instead of OpenRouter, you can use a signed-in Claude Code or Codex CLI (your
+Claude or ChatGPT subscription). Inside Docker, Claude needs
+`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` in `.env`. See
+[docs/subscriptions.md](docs/subscriptions.md).
+
 > **Note:** root `.env` is the only local env file. If you edit Convex functions in `frontend/convex/`, run `make convex-push` to deploy the changes.
 
 > **Free tier:** cloud signed-in accounts get **2,500 row operations per calendar month** (resets on the 1st, UTC). Local mode bypasses the cloud quota and uses your TinyFish/OpenRouter accounts directly.
@@ -311,7 +322,7 @@ If you want a completely fresh start: `make clean` then `make dev`.
 | Auth | Local auth (dev); [Clerk](https://clerk.com) (cloud) |
 | Database | [Convex](https://convex.dev) (self-hosted) |
 | Data Collection | [TinyFish](https://www.tinyfish.ai?utm_source=github&utm_medium=organic&utm_campaign=bigset-developer-2026q2) APIs (Search, Fetch, Browser) |
-| AI orchestration | [Mastra](https://mastra.ai) workflows + [Vercel AI SDK](https://sdk.vercel.ai) + [OpenRouter](https://openrouter.ai) → Claude Sonnet (schema inference + populate agent) |
+| AI orchestration | [Mastra](https://mastra.ai) workflows + [Vercel AI SDK](https://sdk.vercel.ai) + [OpenRouter](https://openrouter.ai), or your Claude / ChatGPT subscription via the Claude Code / Codex CLI ([docs](docs/subscriptions.md)) |
 | Table view | [TanStack Table](https://tanstack.com/table) + [react-window](https://github.com/bvaughn/react-window) virtualization |
 | Exports | CSV (built-in) + XLSX ([SheetJS](https://sheetjs.com), dynamic-imported) |
 | Analytics | [PostHog](https://posthog.com) — events, session replay, error tracking (optional) |

@@ -1,11 +1,10 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { generateText } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { datasetContextSchema, populateColumnSchema } from "../../pipeline/populate.js";
 import { convex, internal } from "../../convex.js";
-import { DEFAULT_MODEL_IDS } from "../../config/models.js";
-import { requireOpenRouterApiKey } from "../../local-credentials.js";
+import { defaultModelConfig } from "../../config/models.js";
+import { openRouterKeyFor, textModel } from "../../ai/language-model.js";
 import { buildPopulateAgent } from "../agents/populate.js";
 import { RunMetrics } from "../run-metrics.js";
 import { saveRunMetrics } from "../save-run-metrics.js";
@@ -109,15 +108,10 @@ Respond with EXACTLY one word: scraper or search`;
 
     let classification: "scraper" | "search" = "search";
     try {
-      const apiKey = await requireOpenRouterApiKey();
-      const openrouter = createOpenRouter({
-        apiKey,
-        baseURL: process.env.OPENROUTER_BASE_URL,
-      });
       const modelSlug =
-        inputData.authContext?.modelConfig?.schemaInference ?? DEFAULT_MODEL_IDS.SCHEMA_INFERENCE;
+        inputData.authContext?.modelConfig?.schemaInference ?? (await defaultModelConfig()).schemaInference;
       const result = await generateText({
-        model: openrouter(modelSlug),
+        model: textModel(modelSlug, await openRouterKeyFor(modelSlug)),
         prompt: classificationPrompt,
         maxOutputTokens: 10,
         abortSignal: getSignal(inputData.datasetId),
@@ -236,6 +230,8 @@ Stop the populate run as soon as the dataset reaches ${inputData.maxRowCount} ro
  * and agent builder, and saved to Convex in the finally block. The save is
  * fire-and-forget — errors are logged but never propagate to the workflow.
  */
+const ORCHESTRATOR_MAX_STEPS = 80;
+
 const agentStep = createStep({
   id: "populate-agent",
   inputSchema: buildPromptOutputSchema,
@@ -247,16 +243,18 @@ const agentStep = createStep({
     let errorMsg: string | undefined;
 
     try {
+      const { populateOrchestrator, investigateSubagent } = inputData.authContext.modelConfig;
       const agent = buildPopulateAgent(
         inputData.authorizedDatasetId,
         inputData.authContext,
         inputData.columns,
-        await requireOpenRouterApiKey(),
+        await openRouterKeyFor(populateOrchestrator, investigateSubagent),
         inputData.maxRowCount,
         metrics,
+        ORCHESTRATOR_MAX_STEPS,
       );
       const abortSignal = getSignal(inputData.authorizedDatasetId);
-      const result = await agent.generate(inputData.prompt, { abortSignal, maxSteps: 80 });
+      const result = await agent.generate(inputData.prompt, { abortSignal, maxSteps: ORCHESTRATOR_MAX_STEPS });
       metrics.addOrchestratorResult(result);
       // Use result.toolCalls (flat accumulated list) — same reasoning as investigate-tool.ts.
       metrics.countToolCalls(result.toolCalls ?? []);

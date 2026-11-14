@@ -96,8 +96,8 @@ export function LocalCredentialsPanel() {
           Service credentials
         </h2>
         <p className="mt-1 text-sm leading-6 text-muted">
-          Add TinyFish and OpenRouter access for live datasets. Local keys stay
-          in your OS keychain.
+          Add TinyFish, plus OpenRouter or a signed-in Claude Code / Codex
+          subscription, for live datasets. Local keys stay in your OS keychain.
         </p>
       </div>
 

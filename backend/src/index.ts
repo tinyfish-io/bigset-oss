@@ -200,7 +200,7 @@ async function ensureLocalSetupReady(reply: FastifyReply): Promise<boolean> {
     return true;
   } catch {
     await reply.code(428).send({
-      error: "Local setup is incomplete. Connect TinyFish and OpenRouter first.",
+      error: "Local setup is incomplete. Connect TinyFish, plus OpenRouter or a signed-in Claude Code / Codex CLI.",
     });
     return false;
   }
@@ -715,6 +715,9 @@ const refreshScheduler = startLocalRefreshScheduler(fastify.log);
 fastify.addHook("onClose", async () => {
   if (refreshScheduler) clearInterval(refreshScheduler);
   await shutdownAnalytics();
+  // Stop the shared `codex app-server` child process, if one was started.
+  const { closeSubscriptionProviders } = await import("./ai/subscriptions.js");
+  await closeSubscriptionProviders();
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -800,11 +803,12 @@ fastify.post("/local-setup/openrouter-oauth", async (req, reply) => {
 
 
 fastify.post("/openrouter/refresh", { preHandler: requireAuth }, async (req, reply) => {
-  const { fetchModelsFromOpenRouter, upsertModelBatch } = await import("./config/models.js");
+  const { fetchModelsFromOpenRouter, upsertModelBatch, getCachedModels } = await import("./config/models.js");
   try {
     const models = await fetchModelsFromOpenRouter();
     await upsertModelBatch(models);
-    return { success: true, models };
+    // Return the full picker list so subscription models stay visible.
+    return { success: true, models: await getCachedModels() };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to refresh models";
     req.log.error(err, "OpenRouter refresh failed");

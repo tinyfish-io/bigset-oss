@@ -13,6 +13,8 @@
  *   update workflow    → orchestrator = (unused, stays 0),  investigate = refresh agents
  */
 
+import { baseToolName } from "../ai/language-model.js";
+
 interface AgentResult {
   // Mastra FullOutput: totalUsage sums across all steps; usage is last-step only.
   // Prefer totalUsage for accurate multi-step accounting.
@@ -82,7 +84,8 @@ export class RunMetrics {
    */
   countToolCalls(toolCalls: unknown[]): void {
     for (const tc of toolCalls as any[]) {
-      const name = tc.payload?.toolName ?? tc.toolName;
+      // Subscription CLIs report bridged tools as mcp__bigset__search_web etc.
+      const name = baseToolName(tc.payload?.toolName ?? tc.toolName);
       if (name === "search_web") this.searchCalls++;
       else if (name === "fetch_page") this.fetchCalls++;
     }
