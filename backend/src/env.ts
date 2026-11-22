@@ -39,6 +39,10 @@ export const env = {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+  // Force the default model backend: openrouter | claude-code | codex.
+  // Unset: OpenRouter if a key is configured, else a signed-in Claude Code
+  // CLI, else a signed-in Codex CLI (see src/config/models.ts).
+  BIGSET_MODEL_BACKEND: process.env.BIGSET_MODEL_BACKEND?.trim() || undefined,
   BIGSET_LOCAL_WORKSPACE_ID: required("BIGSET_LOCAL_WORKSPACE_ID"),
   LOCAL_KEYCHAIN_URL: process.env.LOCAL_KEYCHAIN_URL,
   LOCAL_KEYCHAIN_TOKEN: process.env.LOCAL_KEYCHAIN_TOKEN,

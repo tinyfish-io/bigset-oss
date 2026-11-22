@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { agentModel } from "../../ai/language-model.js";
 import { buildSubagentTool } from "../tools/investigate-tool.js";
 import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
@@ -40,21 +40,14 @@ export function buildPopulateAgent(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
-  openRouterApiKey: string,
+  openRouterApiKey: string | null,
   maxRowCount: number,
   metrics?: RunMetrics,
+  maxSteps?: number,
 ): Agent {
-  const modelSlug = authContext.modelConfig!.populateOrchestrator;
-  const openrouter = createOpenRouter({
-    apiKey: openRouterApiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL,
-  });
-
-  return new Agent({
-    id: "populate-agent",
-    name: "Dataset Populate Orchestrator",
-    instructions: buildInstructions(maxRowCount),
-    model: openrouter(modelSlug),
+  const { model, agentTools } = agentModel(authContext.modelConfig!.populateOrchestrator, {
+    openRouterApiKey,
+    maxSteps,
     tools: {
       search_web: searchWebTool,
       fetch_page: fetchPageTool,
@@ -67,5 +60,13 @@ export function buildPopulateAgent(
         metrics,
       ),
     },
+  });
+
+  return new Agent({
+    id: "populate-agent",
+    name: "Dataset Populate Orchestrator",
+    instructions: buildInstructions(maxRowCount),
+    model,
+    tools: agentTools,
   });
 }

@@ -7,6 +7,7 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
+  RefreshCw,
   X,
 } from "lucide-react";
 import {
@@ -15,6 +16,7 @@ import {
   saveTinyFishApiKey,
   type LocalSetupStatus,
   type ServiceSetupStatus,
+  type SubscriptionStatus,
 } from "@/lib/backend";
 import { isLocalMode } from "@/lib/app-mode";
 
@@ -23,6 +25,14 @@ export default function SetupPage() {
   const [status, setStatus] = useState<LocalSetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<"tinyfish" | "openrouter" | null>(null);
+  const [rechecking, setRechecking] = useState(false);
+
+  function recheck() {
+    setRechecking(true);
+    getLocalSetupStatus()
+      .then(setStatus)
+      .finally(() => setRechecking(false));
+  }
 
   useEffect(() => {
     if (!isLocalMode) {
@@ -59,8 +69,8 @@ export default function SetupPage() {
               Connect your services
             </h1>
             <p className="mt-3 text-base leading-7 text-muted">
-              Add TinyFish and OpenRouter access to start building live
-              datasets.
+              Add TinyFish, then either an OpenRouter key or your own Claude
+              or ChatGPT subscription, to start building live datasets.
             </p>
           </div>
 
@@ -105,13 +115,19 @@ export default function SetupPage() {
               helperLabel="Need an OpenRouter key?"
               helperDescription="Open the OpenRouter keys page"
             />
+
+            <SubscriptionCard
+              subscriptions={status?.subscriptions}
+              rechecking={rechecking}
+              onRecheck={recheck}
+            />
           </div>
 
           <div className="mt-8 flex flex-col gap-4 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm leading-6 text-muted sm:text-base">
               {complete
                 ? "Everything is connected. You can start building datasets."
-                : "Complete both connections to continue."}
+                : "Connect TinyFish, plus OpenRouter or a subscription, to continue."}
             </p>
             <button
               type="button"
@@ -219,6 +235,114 @@ function ServiceCard({
           {helperLabel} {helperDescription}
           <ExternalLink className="size-4 shrink-0" />
         </a>
+      </div>
+    </section>
+  );
+}
+
+const SUBSCRIPTION_OPTIONS = [
+  {
+    key: "claude-code",
+    name: "Claude subscription",
+    cli: "Claude Code",
+    signIn: "claude auth login",
+  },
+  {
+    key: "codex",
+    name: "ChatGPT subscription",
+    cli: "Codex",
+    signIn: "codex login",
+  },
+] as const;
+
+function subscriptionDetail(cli: string, status?: SubscriptionStatus): string {
+  if (status?.available) return `Signed in to ${cli}`;
+  if (status?.reason === "not_installed") return `${cli} is not installed`;
+  if (status?.reason === "not_logged_in") return `${cli} is installed but not signed in`;
+  return `${cli} was not detected`;
+}
+
+function SubscriptionCard({
+  subscriptions,
+  rechecking,
+  onRecheck,
+}: {
+  subscriptions?: LocalSetupStatus["subscriptions"];
+  rechecking: boolean;
+  onRecheck: () => void;
+}) {
+  const anyConnected = SUBSCRIPTION_OPTIONS.some(
+    (option) => subscriptions?.[option.key]?.available,
+  );
+
+  return (
+    <section className="border border-border bg-surface p-5 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex h-9 items-center">
+            <span className="text-xl font-semibold tracking-tight">
+              Or use your subscription
+            </span>
+          </div>
+          <p className="mt-2 text-sm text-muted">
+            No OpenRouter key needed
+          </p>
+        </div>
+        {anyConnected && (
+          <span className="inline-flex items-center gap-1.5 text-sm font-medium text-green-700 dark:text-green-400">
+            <CheckCircle2 className="size-4" />
+            Connected
+          </span>
+        )}
+      </div>
+
+      <p className="mt-6 max-w-2xl text-base leading-7 text-foreground/80">
+        Already pay for Claude or ChatGPT? BigSet can run its models through
+        Claude Code or Codex on this computer, using the plan you are signed in
+        with. Sign in once in a terminal, then check again.
+      </p>
+
+      <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+        {SUBSCRIPTION_OPTIONS.map((option) => {
+          const status = subscriptions?.[option.key];
+          return (
+            <li
+              key={option.key}
+              className="border border-border p-4"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{option.name}</span>
+                {status?.available && (
+                  <CheckCircle2 className="size-4 text-green-700 dark:text-green-400" />
+                )}
+              </div>
+              <p className="mt-1 text-sm text-muted">
+                {subscriptionDetail(option.cli, status)}
+              </p>
+              {!status?.available && (
+                <code className="mt-3 block w-fit rounded bg-foreground/[0.05] px-2 py-1 text-sm">
+                  {option.signIn}
+                </code>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="mt-6">
+        <button
+          type="button"
+          onClick={onRecheck}
+          disabled={rechecking}
+          className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-foreground hover:bg-foreground/[0.04] disabled:opacity-50"
+        >
+          {rechecking ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4" />
+          )}
+          Check again
+        </button>
       </div>
     </section>
   );

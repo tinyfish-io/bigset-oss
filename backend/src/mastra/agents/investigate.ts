@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { agentModel } from "../../ai/language-model.js";
 import { buildPopulateTools } from "../tools/dataset-tools.js";
 import { searchWebTool, fetchPageTool } from "../tools/web-tools.js";
 import type { AuthContext } from "../workflows/populate.js";
@@ -55,28 +55,27 @@ export function buildInvestigateAgent(
   authorizedDatasetId: string,
   authContext: AuthContext,
   columns: PopulateColumn[],
-  openRouterApiKey: string,
+  openRouterApiKey: string | null,
+  maxSteps?: number,
 ): Agent {
-  const modelSlug = authContext.modelConfig!.investigateSubagent;
-  const openrouter = createOpenRouter({
-    apiKey: openRouterApiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL,
-  });
-
   const { insert_row } = buildPopulateTools(
     authorizedDatasetId,
     authContext,
   );
-  return new Agent({
-    id: "investigate-agent",
-    name: "Dataset Investigate Agent",
-    instructions: buildInvestigateInstructions(columns),
-    model: openrouter(modelSlug),
-
+  const { model, agentTools } = agentModel(authContext.modelConfig!.investigateSubagent, {
+    openRouterApiKey,
+    maxSteps,
     tools: {
       insert_row,
       search_web: searchWebTool,
       fetch_page: fetchPageTool,
     },
+  });
+  return new Agent({
+    id: "investigate-agent",
+    name: "Dataset Investigate Agent",
+    instructions: buildInvestigateInstructions(columns),
+    model,
+    tools: agentTools,
   });
 }
