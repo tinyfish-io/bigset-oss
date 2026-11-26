@@ -11,6 +11,8 @@ Routes:
 - `POST /infer-schema` — protected. Accepts `{ prompt: string }`, returns a `DatasetSchema`. Calls `inferSchema()` from the pipeline.
 - `POST /populate` — protected. Accepts a `DatasetContext` (datasetId, name, description, columns). Triggers the populate workflow which clears existing rows, then uses an AI agent to search the web and insert real data.
 
+Local mode (`BIGSET_LOCAL_MODE=1`, opt-in; `PROD=1` always wins) skips caller auth: `requireAuth` and `requireLocalCli` act as the single local user. To keep that safe, `src/local-access.ts` makes the server listen on `127.0.0.1` by default (`BIGSET_BIND_HOST` to change) and rejects any request whose socket peer is not loopback. Docker sets `BIGSET_ALLOW_NON_LOOPBACK=1` because traffic arrives from the bridge; there the protection is that `docker-compose.dev.yml` publishes every port on `127.0.0.1` only. Do not publish ports on all interfaces or remove the guard.
+
 To add a new protected route, register it inside the scoped plugin in `src/index.ts` that has `requireAuth` as a preHandler. Use `req.auth.userId` for the authenticated user — never trust user-supplied IDs in the body.
 
 ## Schema Inference Pipeline

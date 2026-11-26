@@ -138,6 +138,8 @@ start(
     NEXT_PUBLIC_CONVEX_URL: convexUrl,
     NEXT_PUBLIC_BACKEND_URL: backendUrl,
     REFRESH_SCHEDULER_ENABLED: process.env.REFRESH_SCHEDULER_ENABLED ?? "false",
+    // Release builds are local-only. Local mode is opt-in, so set it here.
+    BIGSET_LOCAL_MODE: "1",
   },
   fromRoot("./backend"),
 );

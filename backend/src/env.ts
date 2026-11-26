@@ -1,5 +1,6 @@
 import { config as loadDotenv } from "dotenv";
 import { fileURLToPath } from "node:url";
+import { resolveBindHost, resolveLocalMode } from "./local-access.js";
 
 loadDotenv({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 
@@ -21,7 +22,11 @@ function numberFromEnv(name: string, fallback: number): number {
 export const env = {
   PROD: process.env.PROD,
   IS_PROD: process.env.PROD === "1",
-  IS_LOCAL_MODE: process.env.PROD !== "1",
+  // Opt-in: local mode turns off caller auth, so it must never be the
+  // accidental result of forgetting PROD=1. See ./local-access.ts.
+  IS_LOCAL_MODE: resolveLocalMode(process.env),
+  BIND_HOST: resolveBindHost(process.env),
+  ALLOW_NON_LOOPBACK: process.env.BIGSET_ALLOW_NON_LOOPBACK === "1",
   CLIENT_ORIGIN: process.env.CLIENT_ORIGIN || "http://localhost:3500",
   CONVEX_URL: required("CONVEX_URL"),
   PORT: numberFromEnv("PORT", 3501),

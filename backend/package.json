@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node ../scripts/with-root-env.mjs tsx watch src/index.ts",
     "build": "tsc",
+    "test": "tsx --test src/**/*.test.ts",
     "start": "node ../scripts/with-root-env.mjs node dist/index.js",
     "mastra:dev": "node ../scripts/with-root-env.mjs mastra dev"
   },

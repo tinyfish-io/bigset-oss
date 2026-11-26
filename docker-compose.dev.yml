@@ -2,7 +2,7 @@ services:
   db:
     image: postgres:16-alpine
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: bigset
       POSTGRES_PASSWORD: bigset
@@ -23,7 +23,7 @@ services:
     env_file:
       - .env
     ports:
-      - "3501:3501"
+      - "127.0.0.1:3501:3501"
     volumes:
       - ./backend/src:/app/src
       - ./scripts:/scripts:ro
@@ -32,6 +32,12 @@ services:
       CONVEX_URL: http://convex:3210
       PORT: 3501
       PROD: ${PROD:-}
+      BIGSET_LOCAL_MODE: ${BIGSET_LOCAL_MODE:-}
+      # Inside the container we must listen on all interfaces and requests
+      # arrive from the Docker bridge, not loopback. Host ports above are
+      # published on 127.0.0.1 only, so nothing off this machine gets in.
+      BIGSET_BIND_HOST: 0.0.0.0
+      BIGSET_ALLOW_NON_LOOPBACK: "1"
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
       CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
@@ -65,7 +71,7 @@ services:
     env_file:
       - .env
     ports:
-      - "4111:4111"
+      - "127.0.0.1:4111:4111"
     volumes:
       - ./backend/src:/app/src
       - ./scripts:/scripts:ro
@@ -73,6 +79,7 @@ services:
       HOST: 0.0.0.0
       PORT: 4111
       PROD: ${PROD:-}
+      BIGSET_LOCAL_MODE: ${BIGSET_LOCAL_MODE:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       CONVEX_URL: http://convex:3210
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
@@ -94,7 +101,7 @@ services:
     env_file:
       - .env
     ports:
-      - "3500:3500"
+      - "127.0.0.1:3500:3500"
     volumes:
       - ./frontend/app:/app/app
       - ./frontend/lib:/app/lib
@@ -132,8 +139,8 @@ services:
   convex:
     image: ghcr.io/get-convex/convex-backend:latest
     ports:
-      - "3210:3210"
-      - "3211:3211"
+      - "127.0.0.1:3210:3210"
+      - "127.0.0.1:3211:3211"
     volumes:
       - convex_data:/convex/data
     environment:
@@ -156,7 +163,7 @@ services:
   convex-dashboard:
     image: ghcr.io/get-convex/convex-dashboard:latest
     ports:
-      - "6791:6791"
+      - "127.0.0.1:6791:6791"
     environment:
       NEXT_PUBLIC_DEPLOYMENT_URL: http://127.0.0.1:3210
     depends_on:

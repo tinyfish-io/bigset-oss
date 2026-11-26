@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { env } from "./env.js";
 import clerkAuthPlugin, { requireAuth, getUserEmail } from "./clerk-auth.js";
+import { registerLocalAccessGuard } from "./local-access.js";
 import { inferSchema } from "./pipeline/schema-inference.js";
 import { datasetContextSchema, type DatasetContext } from "./pipeline/populate.js";
 import { populateWorkflow } from "./mastra/workflows/populate.js";
@@ -669,6 +670,12 @@ function startLocalRefreshScheduler(
 }
 
 const fastify = Fastify({ logger: true });
+
+// Local mode has no caller auth; refuse anything not from this machine.
+registerLocalAccessGuard(fastify, {
+  localMode: env.IS_LOCAL_MODE,
+  allowNonLoopback: env.ALLOW_NON_LOOPBACK,
+});
 
 const allowedCorsOrigins = new Set([env.CLIENT_ORIGIN]);
 if (env.IS_LOCAL_MODE) {
@@ -1371,7 +1378,7 @@ await fastify.register(async (instance) => {
 });
 
 try {
-  await fastify.listen({ port: env.PORT, host: "0.0.0.0" });
+  await fastify.listen({ port: env.PORT, host: env.BIND_HOST });
 } catch (err) {
   fastify.log.error(err);
   process.exit(1);

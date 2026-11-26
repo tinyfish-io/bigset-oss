@@ -37,7 +37,7 @@ dev: validate-dev-env install-deps start-local-keychain
 
 validate-dev-env:
 	@if [ ! -f .env ]; then \
-		printf "# Auto-created by make dev. Leave PROD unset for local mode.\n" > .env; \
+		printf "# Auto-created by make dev. Leave PROD unset for local mode (sets BIGSET_LOCAL_MODE=1).\n" > .env; \
 		echo "Created local .env"; \
 	fi
 	@prod="$$(grep '^PROD=' .env | cut -d= -f2-)"; \
@@ -59,6 +59,7 @@ validate-dev-env:
 		ensure_env_var LOCAL_KEYCHAIN_TIMEOUT_MS 5000; \
 		ensure_env_var BIGSET_LOCAL_WORKSPACE_ID "$$workspace_id"; \
 		ensure_env_var LOCAL_KEYCHAIN_TOKEN "$$token"; \
+		ensure_env_var BIGSET_LOCAL_MODE 1; \
 	fi
 	@prod="$$(grep '^PROD=' .env | cut -d= -f2-)"; \
 	if [[ "$$prod" != "1" ]]; then \
